@@ -1,7 +1,9 @@
 name: "Fake Solis Probe"
 version: "0.7.0"
 slug: "fake_solis_probe"
-description: "Emulates a supported Solis hybrid inverter via Modbus TCP so Tibber Bridge can read PV data"
+description: >-
+  Emulates a supported Solis hybrid inverter via Modbus TCP so Tibber Bridge
+  can read PV data
 arch:
   - aarch64
   - amd64
@@ -30,21 +32,55 @@ options:
   mirror_writes: false
   ha_sensor_pv_power: ""
   ha_sensor_grid_power: ""
-  ha_sensor_total_energy: ""
-  ha_sensor_daily_energy: ""
+  ha_sensor_total_pv_generation: ""
+  ha_sensor_daily_pv_generation: ""
+  ha_sensor_household_load_power: ""
+  ha_sensor_backup_load_power: ""
+  ha_sensor_ac_grid_port_power: ""
+  battery_attached: false
+  ha_sensor_battery_soc: ""
+  ha_sensor_battery_power: ""
   grid_power_sign_convention: "negate"
+  battery_power_sign_convention: "discharge_positive"
   pv_power_scale: 1.0
   grid_power_scale: 1.0
-  total_energy_scale: 10.0
-  daily_energy_scale: 10.0
+  total_pv_generation_scale: 1.0
+  daily_pv_generation_scale: 1.0
+  household_load_power_scale: 1.0
+  backup_load_power_scale: 1.0
+  ac_grid_port_power_scale: 1.0
+  battery_soc_scale: 1.0
+  battery_power_scale: 1.0
   pv_power_unavailable_behavior: "zero"
   grid_power_unavailable_behavior: "zero"
-  total_energy_unavailable_behavior: "last_known"
-  daily_energy_unavailable_behavior: "zero"
+  total_pv_generation_unavailable_behavior: "last_known"
+  daily_pv_generation_unavailable_behavior: "zero"
+  household_load_power_unavailable_behavior: "zero"
+  backup_load_power_unavailable_behavior: "zero"
+  ac_grid_port_power_sign_convention: "direct"
+  ac_grid_port_power_unavailable_behavior: "zero"
+  battery_power_unavailable_behavior: "zero"
+  battery_soc_unavailable_behavior: "last_known"
+  # Experimental fake-only remote-dispatch profile. It never controls Home
+  # Assistant or physical equipment and requires mirror_writes for readback.
+  smart_management_enabled: false
+  smart_management_max_charge_soc: 95
+  smart_management_min_soc: 20
+  smart_management_active_power_limit_percent: 100.0
+  smart_management_grid_feed_in_limit_enabled: false
+  smart_management_backflow_limit_w: 0
+  smart_management_allow_grid_charge: true
+  smart_management_meter_location: "grid_side"
+  smart_management_meter_type: "auto"
+  smart_management_peak_shaving_enabled: false
+  smart_management_peak_baseline_soc: 20
+  smart_management_peak_max_grid_power_w: 0
+  smart_management_failsafe_minutes: 5
   fake_vendor: "Ginlong"
   fake_inverter_model: "Solis S6-EH1P"
   fake_logger_model: "S2-WL-ST"
   fake_serial: "S2WLSTFAKE001"
+  fake_hmi_sub_version: 0
   # Inverter type code reported in Modbus register 35000.
   # 2030 = S6-EH1P (1-phase LV hybrid)  — VERIFIED to work with Tibber
   # 2040 = S5-EH1P / HV hybrid 1-phase  — untested with Tibber
@@ -56,7 +92,8 @@ options:
   # Log rotation (v0.7.0)
   # Rotate events.jsonl when it reaches this size (bytes). 0 = disabled.
   log_max_bytes: 5242880
-  # Backup files to keep (.1, .2, …). <= 0 = truncate in-place (no backups).
+  # Backup files to keep (.1, .2, …), maximum 100.
+  # <= 0 = truncate in-place (no backups).
   log_backup_count: 3
 
 schema:
@@ -65,21 +102,53 @@ schema:
   mirror_writes: bool
   ha_sensor_pv_power: str
   ha_sensor_grid_power: str
-  ha_sensor_total_energy: str
-  ha_sensor_daily_energy: str
+  ha_sensor_total_pv_generation: str
+  ha_sensor_daily_pv_generation: str
+  ha_sensor_household_load_power: str
+  ha_sensor_backup_load_power: str
+  ha_sensor_ac_grid_port_power: str
+  battery_attached: bool
+  ha_sensor_battery_soc: str
+  ha_sensor_battery_power: str
   grid_power_sign_convention: list(negate|direct)
+  battery_power_sign_convention: list(charge_positive|discharge_positive)
   pv_power_scale: float
   grid_power_scale: float
-  total_energy_scale: float
-  daily_energy_scale: float
+  total_pv_generation_scale: float
+  daily_pv_generation_scale: float
+  household_load_power_scale: float
+  backup_load_power_scale: float
+  ac_grid_port_power_scale: float
+  battery_soc_scale: float
+  battery_power_scale: float
   pv_power_unavailable_behavior: list(zero|last_known)
   grid_power_unavailable_behavior: list(zero|last_known)
-  total_energy_unavailable_behavior: list(zero|last_known)
-  daily_energy_unavailable_behavior: list(zero|last_known)
+  total_pv_generation_unavailable_behavior: list(zero|last_known)
+  daily_pv_generation_unavailable_behavior: list(zero|last_known)
+  household_load_power_unavailable_behavior: list(zero|last_known)
+  backup_load_power_unavailable_behavior: list(zero|last_known)
+  ac_grid_port_power_sign_convention: list(direct|negate)
+  ac_grid_port_power_unavailable_behavior: list(zero|last_known)
+  battery_power_unavailable_behavior: list(zero|last_known)
+  battery_soc_unavailable_behavior: list(zero|last_known)
+  smart_management_enabled: bool
+  smart_management_max_charge_soc: int
+  smart_management_min_soc: int
+  smart_management_active_power_limit_percent: float
+  smart_management_grid_feed_in_limit_enabled: bool
+  smart_management_backflow_limit_w: int
+  smart_management_allow_grid_charge: bool
+  smart_management_meter_location: list(grid_side|load_side|grid_and_pv)
+  smart_management_meter_type: list(auto|general_1_phase|acrel_3_phase|general_3_phase|eastron_1_phase|eastron_3_phase|no_meter)
+  smart_management_peak_shaving_enabled: bool
+  smart_management_peak_baseline_soc: int
+  smart_management_peak_max_grid_power_w: int
+  smart_management_failsafe_minutes: int
   fake_vendor: str
   fake_inverter_model: str
   fake_logger_model: str
   fake_serial: str
+  fake_hmi_sub_version: int
   fake_inverter_type_code: int
   log_max_bytes: int
   log_backup_count: int

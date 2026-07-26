@@ -1,208 +1,363 @@
-# ha-fake-solis-probe
+# Fake Solis Probe
 
-**Makes Tibber Bridge work with non-hybrid Solis inverters by emulating a supported Solis hybrid inverter over Modbus TCP.**
+**Connects Tibber Bridge to Home Assistant PV telemetry by emulating a
+supported Solis hybrid inverter, with an optional fake smart-management
+register surface.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/addon%20version-0.6.0-blue)](fake_solis_probe/CHANGELOG.md)
+[[![Version](https://img.shields.io/badge/app%20version-0.9.0-blue)](fake_solis_probe/CHANGELOG.md)]([![Version](https://img.shields.io/badge/addon%20version-0.6.0-blue)](fake_solis_probe/CHANGELOG.md))
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-HAOS%20Addon-41BDF5?logo=home-assistant)](https://www.home-assistant.io/)
 ![Status: Experimental](https://img.shields.io/badge/status-experimental-orange)
 
-> ⚠️ **Disclaimer:** This is an independent community project. It is not affiliated with,
-> endorsed by, or supported by Tibber AS or Ginlong Solis. Use at your own risk.
-> Future firmware updates by Tibber or Solis may break functionality without notice.
+> [!WARNING]
+> This independent community project is not affiliated with Tibber AS or
+> Ginlong Solis. Firmware or cloud changes can alter Tibber behavior.
 
----
+## What it does
 
-## Why does this exist?
+The App reads semantic Home Assistant sensors and serves a canonical Solis
+hybrid Modbus TCP profile on port 502. It never contacts the user's physical
+inverter or forwards Modbus writes to Home Assistant or real hardware.
 
-Tibber's Solis integration only supports **hybrid** inverter models (S5/S6 EH1P, EH3P, RHI, EA1P).
-If you have a **string inverter** (Solis 5P, S5 GR3P, S6 GR1P, etc.), Tibber will tell you
-your model is not supported.
-
-This Home Assistant addon solves that by running a local Modbus TCP server that emulates a
-supported Solis hybrid inverter, feeding real-time PV data from your existing HA sensors to
-Tibber Bridge — without touching your real inverter or datalogger.
-
-The **default emulated model is Solis S6-EH1P** (type code `2030`), which is the verified default for maximum compatibility. From v0.6.0, other Solis hybrid type codes can be configured. Specifically, **Solis S6-EH3P** (type code `2050`) has been **verified in one 3-phase installation** (including stable overnight operation, hourly identity polling, and proper zero-fallback behavior during nighttime shutdown). It is recommended as a more consistent emulated model for 3-phase setups, though it is not universally long-term verified across many different environments.
-See the [Inverter type code](#inverter-type-code) section below.
-
----
-
-## How It Works
-
-```
-Your inverter → HA integration → HA sensors
-                                      ↓
-                            Fake Solis Probe addon
-                            (Modbus TCP :502, emulates S6-EH1P by default)
-                                      ↓
-                             Tibber Bridge (LAN)
-                                      ↓
-                              Tibber Cloud → Tibber app
+```text
+PV system -> Home Assistant sensors -> Fake Solis Probe App
+                                      -> Modbus TCP :502
+                                      -> Tibber Bridge
 ```
 
-The addon reads four configurable HA sensor entities every 5 seconds and serves the data
-to Tibber Bridge, which polls every 10 seconds. Your real inverter hardware is never contacted.
+The physical PV system can be any brand. The emulated wire profile remains the
+base Solis hybrid profile; the App does not mix string-inverter or optional
+Smart Port register maps into that profile. The experimental smart-management
+profile is a separate, explicit opt-in and remains entirely inside the fake
+process.
 
-See [docs/architecture.md](docs/architecture.md) for full technical details.
+## Current protocol status
 
----
+Version 0.9.0 retains the corrected 0.8.0 base profile and adds:
 
-## What's Been Verified
+- PV power remains at `33057–33058`.
+- Meter total active power remains at `33263–33264`.
+- The canonical 16-word serial field is `33004–33019`.
+- Total and daily PV generation are now encoded only at `33029–33030` and
+  `33035`.
+- `33121` is the operating-status bitfield and is held at `0x0001`.
+- Optional battery direction, state of charge, and power use `33135`, `33139`,
+  and `33149–33150`.
+- Optional household load power uses `33147`.
+- Optional backup load power uses `33148`.
+- Optional, distinct inverter AC grid-port power uses `33151–33152`.
+- `fake_hmi_sub_version` supplies the discovery word at `33069`.
+- An experimental smart-management profile can advertise remote dispatch at
+  `34502–34503` and mirror fake holding-register writes.
+- Unresolved or profile-specific addresses requested by Tibber receive safe
+  zeroes.
 
-These observations were made empirically during development:
+The observed Tibber steady-state requests do not include the canonical
+generation registers. Tibber may therefore stop displaying lifetime or daily
+generation after this correction even though every request still succeeds.
+That is not permission to restore a disproven payload meaning.
 
-- ✅ Tibber Bridge accepts inverter type code `2030` (S6-EH1P) as a valid model — **verified default**
-- ✅ Inverter type code `2050` (S6-EH3P) verified: Tibber Bridge connects, app opens, and stable overnight operation has been verified in one 3-phase installation — **verified in one installation**
-- ✅ Tibber Bridge polls 8 register blocks every 10 seconds (FC4, Input Registers)
-- ✅ Persistent TCP connection — no reconnects observed over hours of operation
-- ✅ Tibber makes **no write requests** — purely read-only integration confirmed
-- ✅ Scaling factors verified against physical V×I DC calculations and cloud portal data
-- ✅ S32 two's complement encoding verified by round-trip test
-- ✅ Battery capacity = 0 accepted by Tibber app without error
-- ✅ Startup validation prevents misconfiguration from serving bad data silently
-
----
+The sanitized observations preserved in the
+[pytest interoperability tables](fake_solis_probe/tests/test_register_mapping.py)
+confirm a 2026-07-26 Tibber discovery burst, continued polling with response
+bytes, and three acknowledged two-frame FC16 Remote Dispatch bursts. The last
+contains a signed 2.61 kW battery discharge target. Post-write readback,
+cancellation, failsafe expiry, pairing/UI acceptance, displayed values, and
+schedule execution still require controlled verification.
 
 ## Requirements
 
-- **Home Assistant OS** (tested on HA Green, HAOS 14.x)
-- A working **HA integration** for your inverter (Modbus, SolarEdge, Fronius, Huawei, etc.)
-  that provides sensors for PV power and energy — **already set up and working**
-- A signed **net grid power sensor** in HA (e.g. from Tibber Pulse, a smart meter, or
-  your utility's integration) — positive when importing, negative when exporting (or vice versa)
-- **Tibber Bridge** on the same LAN
-- Active **Tibber subscription**
-
-> The addon works with **any** inverter brand — you just need the right HA sensors.
-> See [docs/adapting-for-other-inverters.md](docs/adapting-for-other-inverters.md).
-
----
+- Home Assistant OS with support for local Apps.
+- Tibber Bridge on the same LAN as Home Assistant.
+- Four required `sensor.*` entities:
+  - current total PV power;
+  - signed meter or net-grid power;
+  - cumulative total PV generation;
+  - current-day PV generation.
+- Optional `sensor.*` entities for household load, backup load, distinct
+  inverter AC grid-port power, and—when enabled—battery state of charge and
+  one signed battery power source.
 
 ## Installation
 
-### Option A — Manual (Samba)
+### Home Assistant App repository
 
-1. Enable the **Samba** addon in HA if not already active
-2. Copy the `fake_solis_probe/` folder to `\\<HA-IP>\addons\fake_solis_probe\`
-3. In HA: **Settings → Add-ons → ⋮ → Check for updates**
-4. Find **Fake Solis Probe** in Local add-ons and click **Install**
-5. Go to **Configuration** and fill in your sensor entity IDs (see below)
-6. Go to **Info** and enable **Start on boot** + **Watchdog**
-7. Click **Start**
+1. Open **Settings > Apps > App store**.
+2. Add `https://github.com/Chillout222/ha-fake-solis-probe` as a repository.
+3. Install **Fake Solis Probe**.
+4. Configure the required entities.
+5. Enable start on boot and watchdog, then start the App.
 
-### Option B — As HA Add-on Repository
+### Manual installation
 
-1. Go to **Settings → Add-ons → Add-on Store**
-2. Click **⋮** (top right) → **Repositories**
-3. Add: `https://github.com/Chillout222/ha-fake-solis-probe`
-4. Find **Fake Solis Probe** and install
-5. Configure and start as above
+Copy `fake_solis_probe/` to the Home Assistant local Apps directory
+(`/addons/fake_solis_probe/` when using the traditional Samba layout), reload
+the App store, install, configure, and start it.
 
----
+## Required configuration
 
-## Configuration
+Use neutral examples such as the following; replace them with entities from
+your own Home Assistant instance.
 
-Go to the **Configuration** tab after installing.
-
-### Required — Sensor entity IDs
-
-| Option | Description | Example |
+| Option | Required meaning | Typical unit |
 |---|---|---|
-| `ha_sensor_pv_power` | PV active power sensor (**W**) | `sensor.solis_active_power` |
-| `ha_sensor_grid_power` | Net grid power sensor (**W, signed**) | `sensor.grid_net_power` |
-| `ha_sensor_total_energy` | Total lifetime energy (**kWh**) | `sensor.solis_total_energy` |
-| `ha_sensor_daily_energy` | Daily energy production (**kWh**) | `sensor.solis_energy_today` |
+| `ha_sensor_pv_power` | Nonnegative total PV/DC power | W or kW |
+| `ha_sensor_grid_power` | Signed meter total active power | W or kW |
+| `ha_sensor_total_pv_generation` | Nonnegative cumulative PV generation | kWh, Wh, or MWh |
+| `ha_sensor_daily_pv_generation` | Nonnegative PV generation for the current day | kWh, Wh, or MWh |
 
-**How to find entity IDs:** In HA, go to **Developer Tools → States**, filter by `sensor`,
-and look for sensors with matching units and names.
+The App checks that each entity exists and currently has a finite numeric state
+or exactly `unknown`/`unavailable`. When Home Assistant declares metadata,
+power sensors must have the `power` device class and generation sensors must
+have the `energy` device class and an energy-compatible unit. Grid import,
+grid export, net-grid balance, cost, and other signed balance entities are not
+valid generation sources.
 
-### Scaling options
+### Scaling
 
-| Option | Default | When to change |
-|---|---|---|
-| `pv_power_scale` | `1.0` | Set to `1000.0` if your power sensor is in kW |
-| `grid_power_scale` | `1.0` | Set to `1000.0` if your grid sensor is in kW |
-| `total_energy_scale` | `10.0` | Leave as-is if sensor is in kWh (standard) |
-| `daily_energy_scale` | `10.0` | Leave as-is if sensor is in kWh |
+Scales convert the source state to the physical unit named below. They must be
+positive and finite.
 
-### Grid power sign convention
+| Option | Default | Output after scaling |
+|---|---:|---|
+| `pv_power_scale` | `1.0` | W |
+| `grid_power_scale` | `1.0` | W |
+| `total_pv_generation_scale` | `1.0` | kWh |
+| `daily_pv_generation_scale` | `1.0` | kWh |
 
-| Option | Description |
+Examples:
+
+| Source unit | Power scale | Generation scale |
+|---|---:|---:|
+| W / kWh | `1.0` | `1.0` |
+| kW / Wh | `1000.0` | `0.001` |
+| — / MWh | — | `1000.0` |
+
+The App then applies the fixed wire encoding: total generation is whole kWh in
+a U32 pair; daily generation is tenths of kWh in one U16.
+
+### Native Home Assistant helpers
+
+Do not create a YAML template sensor or ask this App to integrate power.
+
+If only a PV power sensor is available:
+
+1. Open **Settings > Devices & services > Helpers**.
+2. Create an **Integral** helper using the PV power sensor.
+3. Configure its output as cumulative kWh. For a source in watts, use the
+   kilo unit prefix and hours as the time unit. The `left` method is generally
+   appropriate for sparse step-like power updates.
+4. Use that helper for `ha_sensor_total_pv_generation`.
+
+If a daily generation sensor is missing, create a **Utility Meter** helper in
+the same Helpers screen, select the cumulative generation entity as its source,
+choose a daily cycle, and use the resulting sensor for
+`ha_sensor_daily_pv_generation`.
+
+### Grid sign
+
+The canonical meter register is positive for export and negative for import.
+
+| `grid_power_sign_convention` | Use when the HA sensor reports |
 |---|---|
-| `grid_power_sign_convention: negate` | Your sensor: positive=import, negative=export **(most common)** |
-| `grid_power_sign_convention: direct` | Your sensor already matches Solis: positive=export |
+| `negate` (default) | positive import, negative export |
+| `direct` | positive export, negative import |
 
-To verify: on a sunny day with low consumption, you should be exporting. Check your sensor's
-value at that moment — if it's negative, use `negate`. If positive, use `direct`.
+### Unavailable behavior
 
-### Other options
+| Option | Default |
+|---|---|
+| `pv_power_unavailable_behavior` | `zero` |
+| `grid_power_unavailable_behavior` | `zero` |
+| `total_pv_generation_unavailable_behavior` | `last_known` |
+| `daily_pv_generation_unavailable_behavior` | `zero` |
+
+Each policy accepts `zero` or `last_known`.
+
+Fresh startup uses zero until the first valid sample. Total generation never
+decreases. A daily `last_known` value is retained only within the Home
+Assistant local calendar date. The App resolves that timezone through the Home
+Assistant API. If it cannot, the effective daily fallback is forced to `zero`
+and `33035` stays zero even when a numeric sample is present, because the App
+cannot authenticate that sample as belonging to the current local day.
+
+## Optional household load
+
+| Option | Default | Meaning |
+|---|---:|---|
+| `ha_sensor_household_load_power` | blank | Nonnegative household load power sensor |
+| `household_load_power_scale` | `1.0` | Source-to-W multiplier |
+| `household_load_power_unavailable_behavior` | `zero` | Fallback policy |
+
+Household load is independent of battery support. When left blank, reserved
+register `33147` remains zero.
+
+## Optional backup and AC grid-port power
+
+These sources are independent of battery support and of each other:
+
+| Option | Default | Meaning |
+|---|---:|---|
+| `ha_sensor_backup_load_power` | blank | Nonnegative backup/EPS load power |
+| `backup_load_power_scale` | `1.0` | Source-to-W multiplier |
+| `backup_load_power_unavailable_behavior` | `zero` | Fallback policy |
+| `ha_sensor_ac_grid_port_power` | blank | Signed inverter AC grid-port power; distinct from meter power |
+| `ac_grid_port_power_scale` | `1.0` | Source-to-W multiplier |
+| `ac_grid_port_power_sign_convention` | `direct` | Interprets the source sign |
+| `ac_grid_port_power_unavailable_behavior` | `zero` | Fallback policy |
+
+Backup load is encoded as nonnegative U16 W at `33148`. AC grid-port power is
+encoded as S32 W at `33151–33152`, high word first, with positive meaning
+export/to-grid and negative meaning import/from-grid.
+
+| AC grid-port sign setting | Use when the HA source reports |
+|---|---|
+| `direct` (default) | positive export, negative import |
+| `negate` | positive import, negative export |
+
+Do not point `ha_sensor_ac_grid_port_power` at the same meter/net-grid entity
+used for `ha_sensor_grid_power`. Registers `33151–33152` describe the
+inverter's AC grid port; `33263–33264` describe meter total active power.
+When an option is blank, its profile-owned register remains zero.
+
+## Optional battery telemetry
+
+Set `battery_attached: true` only when both required battery sensors are
+available.
+
+| Option | Default | Meaning |
+|---|---:|---|
+| `battery_attached` | `false` | Enables battery validation and polling |
+| `ha_sensor_battery_soc` | blank | Battery state of charge |
+| `ha_sensor_battery_power` | blank | One signed charge/discharge power source |
+| `battery_soc_scale` | `1.0` | Source-to-percent multiplier |
+| `battery_power_scale` | `1.0` | Source-to-W multiplier |
+| `battery_power_sign_convention` | `discharge_positive` | Interprets the source sign |
+| `battery_soc_unavailable_behavior` | `last_known` | Starts at zero until valid |
+| `battery_power_unavailable_behavior` | `zero` | Deterministic idle fallback |
+
+| Battery sign setting | Positive source | Negative source |
+|---|---|---|
+| `discharge_positive` | discharge | charge |
+| `charge_positive` | charge | discharge |
+
+The App writes a nonnegative power magnitude and a separate canonical
+direction. Zero or unavailable power writes zero magnitude and direction
+`0` deterministically; this is an emulator fallback, not a protocol-defined
+idle code. State of charge must resolve to `0..100%`.
+
+When `battery_attached` is false, battery entity fields are not validated or
+polled and their reserved registers remain zero. During Tibber pairing, enter
+zero capacity for a no-battery system; for a real battery, enter its actual
+capacity in Tibber because capacity is not supplied by this App.
+
+## Upgrade from 0.7.x
+
+The old keys are rejected at startup and are never translated:
+
+| Removed key | Replacement |
+|---|---|
+| `ha_sensor_total_energy` | `ha_sensor_total_pv_generation` |
+| `ha_sensor_daily_energy` | `ha_sensor_daily_pv_generation` |
+| `total_energy_scale` | `total_pv_generation_scale` |
+| `daily_energy_scale` | `daily_pv_generation_scale` |
+| `total_energy_unavailable_behavior` | `total_pv_generation_unavailable_behavior` |
+| `daily_energy_unavailable_behavior` | `daily_pv_generation_unavailable_behavior` |
+
+Review energy scales during migration. The new generation scales convert the
+source to kWh and default to `1.0`; they are not raw-register multipliers.
+
+## Advanced options
 
 | Option | Default | Description |
-|---|---|---|
-| `enable_http` | `false` | Enable HTTP server on port 80 (for discovery experiments) |
-| `log_raw_hex` | `false` | Log raw Modbus PDU hex (debug mode — can generate large logs) |
-| `mirror_writes` | `false` | Mirror Modbus writes into register cache (writes are never forwarded) |
-| `fake_vendor` | `Ginlong` | Vendor string returned in Modbus Device ID |
-| `fake_inverter_model` | `Solis S6-EH1P` | Model string returned in Modbus Device ID |
-| `fake_serial` | `S2WLSTFAKE001` | Serial number returned in Modbus Device ID |
-| `fake_inverter_type_code` | `2030` | Inverter type code in register 35000 — see table below |
+|---|---:|---|
+| `enable_http` | `false` | Enables the optional HTTP probe on port 80 |
+| `log_raw_hex` | `false` | Logs Modbus PDU hex; enable only while debugging |
+| `mirror_writes` | `false` | Mirrors FC6/FC16 into the fake holding-register overlay only |
+| `fake_vendor` | `Ginlong` | FC17/FC43 vendor text |
+| `fake_inverter_model` | `Solis S6-EH1P` | FC17/FC43 model text; not part of the serial register field |
+| `fake_logger_model` | `S2-WL-ST` | FC43 logger text |
+| `fake_serial` | `S2WLSTFAKE001` | ASCII serial, at most 32 encoded bytes |
+| `fake_inverter_type_code` | `2030` | U16 value at profile-owned register `35000` |
+| `fake_hmi_sub_version` | `0` | U16 discovery value at profile-owned register `33069` |
+| `log_max_bytes` | `5242880` | Event-log rotation threshold; `0` disables rotation |
+| `log_backup_count` | `3` | Rotated backups; integer at most `100`, nonpositive truncates |
 
-### Inverter type code
+See the [App-specific README](fake_solis_probe/README.md) for register-file and
+runtime details.
 
-> **Note:** The emulated inverter type defaults to S6-EH1P (1-phase hybrid, type code 2030).
-> While `2030` remains the recommended default for maximum compatibility, type code `2050` (S6-EH3P)
-> has been **verified in one 3-phase installation** (including overnight behavior). It is recommended
-> as a more consistent choice for 3-phase setups. Other codes remain untested.
-> See [docs/adapting-for-other-inverters.md](docs/adapting-for-other-inverters.md).
+## Experimental smart management
 
-| Code | Model | Phase | Tibber status |
-|---|---|---|---|
-| `2030` | S6-EH1P | 1-phase LV | ✅ Verified (Default) |
-| `2040` | S5-EH1P HV | 1-phase HV | Untested |
-| `2050` | S6-EH3P | 3-phase LV | ✅ Verified in one installation (overnight operation confirmed) |
-| `2060` | S5-EH3P HV | 3-phase HV | Untested |
+This profile is disabled by default. To test Tibber external/smart management,
+set both:
 
----
+```yaml
+mirror_writes: true
+smart_management_enabled: true
+```
 
-## Pairing with Tibber
+Startup fails if smart management is enabled without write mirroring. When
+enabled, the App advertises remote-dispatch support with `34502 = 0xAA55` and
+`34503 = 0x0001`, exposes validated fake defaults for the observed legacy
+holding registers, and provides an in-memory readback surface for
+`44100–44199`.
 
-After the addon is running:
+| Option | Default | Fake register behavior |
+|---|---:|---|
+| `smart_management_enabled` | `false` | Enables this experimental fake profile; requires `mirror_writes` |
+| `smart_management_max_charge_soc` | `95` | Maximum SoC at `43010` and `44110` |
+| `smart_management_min_soc` | `20` | Minimum SoC at `43011` and `44109` |
+| `smart_management_active_power_limit_percent` | `100.0` | Active-power limit at `43052` |
+| `smart_management_grid_feed_in_limit_enabled` | `false` | Feed-in-limit flags at `43073` and `44102` |
+| `smart_management_backflow_limit_w` | `0` | Limit at `43074` and `44104`, in 100 W steps |
+| `smart_management_allow_grid_charge` | `true` | Storage-control grid-charge bit at `43110` |
+| `smart_management_meter_location` | `grid_side` | Meter-location byte at `43140` |
+| `smart_management_meter_type` | `auto` | Meter-type byte at `43140`; `auto` follows the fake inverter family |
+| `smart_management_peak_shaving_enabled` | `false` | Peak-shaving bits at `43110` and `43483` |
+| `smart_management_peak_baseline_soc` | `20` | Peak baseline SoC at `43487` |
+| `smart_management_peak_max_grid_power_w` | `0` | Peak grid-power limit at `43488`, in 100 W steps |
+| `smart_management_failsafe_minutes` | `5` | `1..30` minute fake timeout shared by `43282` and `44101` |
 
-1. Open the **Tibber app** → **Settings** → your home → **Solar**
-2. Select **Solis** → **S6-EH1P** (or start the inverter setup flow)
-3. The app will scan your LAN for port 502 — it should find the addon
-4. When asked for battery capacity, enter **0** (no battery)
-5. Done — Tibber app will show "Your Solis inverter is connected"
+This does **not** control energy equipment. FC6/FC16 writes update only the
+fake in-memory holding overlay and are cleared on restart. The App never calls
+Home Assistant services and never forwards commands to a physical inverter.
+Defined time-of-use words in the `44100–44199` range are raw mirrored readback
+only; protocol-reserved gaps remain protected zeroes. Invalid profile writes
+retain the previous readback. The App does not interpret schedules or run a
+charging controller.
 
----
+## Pairing and verification
 
-## Technical Details
+See [Tibber discovery](docs/tibber-discovery.md). The App continues to answer
+all eight observed steady-state FC4 request ranges with the requested word
+count, using canonical values or deterministic safe zeroes.
 
-- [Architecture](docs/architecture.md) — full data chain and design decisions
-- [Register Map](docs/register-map.md) — empirical Tibber polling pattern and register definitions
-- [Tibber Discovery](docs/tibber-discovery.md) — step-by-step connection sequence
-- [Adapting for Other Inverters](docs/adapting-for-other-inverters.md) — how to configure for non-Solis setups
-- [Troubleshooting](docs/troubleshooting.md) — common problems and fixes
+A 2026-07-26 trace confirms three acknowledged two-frame Tibber FC16 Remote
+Dispatch bursts in a session associated with smart scheduling. They use
+system-settings and real-time blocks, including a later signed 2.61 kW
+discharge target; no TOU block was written. Before relying on 0.9.0, verify
+post-write FC3 readback, cancellation, failsafe expiry, the Tibber UI outcome,
+and the values Tibber displays. Test smart management only with the explicit
+opt-in above. Loss of a display value should trigger a new sanitized capture
+and evidence review, never restoration of an address meaning known to be
+wrong.
 
----
+## Technical documentation
 
-## Contributing
+- [Architecture](docs/architecture.md)
+- [Register reconciliation ledger](docs/register-map.md)
+- [Adapting Home Assistant sources](docs/adapting-for-other-inverters.md)
+- [Tibber discovery](docs/tibber-discovery.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Changelog](fake_solis_probe/CHANGELOG.md)
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Bug reports and PRs welcome.
-Please **remove all IP addresses, entity IDs, and personal information** from logs before posting.
+## Security and privacy
 
----
+The Supervisor token is never logged. Runtime logs use hashed references for
+entity IDs, peers, and HTTP request targets. Raw PDU logging can still reveal
+values or identity payloads; remove entity references, serials, measured
+values, transaction details, and network information before sharing logs.
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
-
----
-
-## Acknowledgments
-
-- The [Home Assistant](https://www.home-assistant.io/) community for the excellent addon framework
-- The [Ginlong Solis Modbus documentation](https://www.ginlong.com/) for register reference
-- [Tibber](https://tibber.com/) — for an otherwise excellent energy service
-- AI-assisted architecture, implementation, and documentation

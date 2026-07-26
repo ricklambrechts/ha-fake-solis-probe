@@ -21,7 +21,18 @@ Use the [feature request template](.github/ISSUE_TEMPLATE/feature_request.md).
 - Keep PRs small and focused — one change per PR
 - Follow [PEP 8](https://pep8.org/) for Python code
 - Update `CHANGELOG.md` under `[Unreleased]` with a short description of your change
-- Run syntax check before submitting: `python -m py_compile fake_solis_probe/fake_solis_probe.py`
+- Install the development tools before running checks:
+  `python -m pip install --requirement requirements-dev.txt`
+- Apply Ruff's safe lint fixes and formatter before submitting:
+  `ruff check --fix .` and `ruff format .`
+- Verify Ruff is clean:
+  `ruff check .` and `ruff format --check .`
+- Compile all Python sources:
+  `python -m compileall -q fake_solis_probe`
+- Run the regression tests (the register-mapping suite uses pytest):
+  `python -B fake_solis_probe/tests/test_behavior.py`,
+  `python -B fake_solis_probe/tests/test_log_rotation.py`, and
+  `python3 -B -m pytest fake_solis_probe/tests/test_register_mapping.py`
 - Do not commit personal information (IP addresses, entity IDs, tokens, real names unless you choose to)
 
 ## Testing Locally
@@ -35,6 +46,9 @@ Use the [feature request template](.github/ISSUE_TEMPLATE/feature_request.md).
 ## Code Style
 
 - Python 3.11+, standard library only (no external dependencies)
+- Ruff is used for linting, import sorting, and formatting. Run
+  `ruff check --fix .` followed by `ruff format .` to apply both kinds of
+  changes locally.
 - Type hints on all public functions
 - Log events via `log_event()` — do not use `print()` except in `load_options()` before logging is available
 - All Modbus logic goes through `ModbusHandler` — do not add protocol handling elsewhere
