@@ -19,7 +19,14 @@ Evidence is applied in this order:
    inverter, and no parallel system. The fake profile described below is
    emulator behavior; it does not assert that every selectable fake type code
    and firmware combination is in that trial scope.
-2. The reviewed
+2. The [Solis-hosted hybrid Modbus table](https://solis-service.solisinverters.com/helpdesk/attachments/2043689326152),
+   attachment `2043689326152` linked by Solis's
+   [public Modbus-table article](https://solis-service.solisinverters.com/es/support/solutions/articles/44002663852-tabla-de-modbus-no-nda),
+   defines the hybrid AC voltage, phase-current, and active-power telemetry at
+   `33073–33080`. It is the official source for those addresses, types, and
+   scales; it does not establish a positive/negative direction convention for
+   inverter AC active power or guarantee that every hybrid model supplies it.
+3. The reviewed
    [`solis_modbus` commit `1e811052a5571e1a141420767407c6f360501508`](https://github.com/Pho3niX90/solis_modbus/tree/1e811052a5571e1a141420767407c6f360501508)
    documents integration behavior, derived entities, and candidate extensions.
    Relevant immutable files are
@@ -40,7 +47,7 @@ Evidence is applied in this order:
    base-profile type, scale, sign, or word order. The pinned
    `switch_sensors.py` content has SHA-256
    `12b62c323f9e2e8106c901a598ef29c956cb60d1bdffa2acbfce2c419f94a512`.
-3. The
+4. The
    [public stable Home Assistant sensor catalogue](https://solis-modbus.readthedocs.io/en/stable/sensors.html)
    was reviewed on 2026-07-25; the reviewed content had SHA-256
    `b3362b9d9b930f0d09946f474480be58dc480ea1b0e51c82ac91314f9096c3d1`.
@@ -49,8 +56,8 @@ Evidence is applied in this order:
    names, Home Assistant metadata, candidate spans, client decode options, and
    derived formulas, but not independent protocol evidence or authority for
    wire type, word order, scale, sign, or model applicability.
-4. Sanitized pytest request-shape parameter tables establish consumer behavior
-   only.
+5. Sanitized pytest request-shape parameter tables and the later sanitized
+   `33070/26` runtime observation establish consumer behavior only.
 
 The existing base-profile rows below remain the implementation contract, not a
 new source of protocol evidence. New or changed semantic claims still require
@@ -130,7 +137,9 @@ profile. None of these rows authorizes a string-inverter mapping.
 | `33035` | input / FC4 | U16 | Today’s PV generation, 0.1 kWh/raw | live | not in supplied steady-state capture | community consolidation; pinned plugin; stable catalogue |
 | `33057–33058` | input / FC4 | U32, high word first | Total DC output / total PV power, 1 W/raw | live | `33057/2` steady-state | Smart Control input diagram; community consolidation; pinned plugin/stable catalogue name and scale; plugin S32 conflict; request-shape table |
 | `33069` | input / FC4 | U16 | HMI sub-version candidate; raw fake discovery value | fixed/reserved from `fake_hmi_sub_version` | inside `33067/3` discovery read | community protocol snapshot; request-shape table |
-| `33079–33080` | input / FC4 | S32, high word first | Inverter AC active power, 1 W/raw | unowned | no supplied observation | Smart Control diagram names start `33079`; community consolidation and pinned plugin/stable catalogue provide the pair |
+| `33073–33075` | input / FC4 | 3 × U16, high byte first | AC voltage channels A/B/C, 0.1 V/raw | configured HA sources take precedence; otherwise fixed synthetic 230.0 V on A for all fake types and B/C only for `2050`/`2060` | inside `33070/26` | Solis-hosted hybrid Modbus table for wire mapping; emulator-only synthetic policy; later request observation |
+| `33076–33078` | input / FC4 | 3 × U16, high byte first | AC current channels A/B/C, 0.1 A/raw | live when configured; otherwise zero | inside `33070/26` | Solis-hosted hybrid Modbus table; later request observation |
+| `33079–33080` | input / FC4 | S32, high word first; big-endian bytes | Inverter AC active power, 1 W/raw; positive/negative direction unresolved | live from independent signed AC-power source when configured; otherwise zero | inside `33070/26` | Solis-hosted hybrid Modbus table; Smart Control diagram; later request observation |
 | `33121` | input / FC4 | U16 bitfield | Operating status; the emulator uses bit 0 for normal operation | fixed `0x0001` | `33121/1` steady-state | community consolidation names the address only; established emulator contract; request-shape table |
 | `33135` | input / FC4 | U16 | Battery direction: `0=charge`, `1=discharge`; no protocol idle code | live when battery enabled; otherwise zero | inside `33135/17` | Smart Control input diagram; community consolidation; pinned derived logic; stable catalogue naming; request-shape table |
 | `33139` | input / FC4 | U16 | Battery state of charge, 1%/raw | live when battery enabled; otherwise zero | inside `33135/17` | community consolidation; pinned plugin; stable catalogue; request-shape table |
@@ -189,7 +198,7 @@ candidate inventory, not ownership:
 |---|---|---|
 | `33031–33040` | current/last month, yesterday, current/last year PV generation | integration/community names and scales; not implemented |
 | `33049–33056` | PV voltage/current channels 1–4 | integration/community candidates; also feed derived PV-power entities |
-| `33072–33084`, `33093–33096` | DC bus, AC phase values, reactive/apparent power, temperature, frequency, and raw status | integration/community candidates; `33095` is distinct from `33121` |
+| `33072`, `33081–33084`, `33093–33096` | DC bus, reactive/apparent power, temperature, frequency, and raw status | integration/community candidates; `33095` is distinct from `33121` |
 | `33132–33134` | storage-control switching value, battery voltage, and signed battery current | input-register candidates; never confuse them with holding `43132–43133` |
 | `33153–33156` | backup phase-B/C voltage and current | pinned-plugin/community candidates absent from the reviewed stable catalogue |
 | `33251–33262` | meter phase voltage/current and phase active power | Smart Control names the three power pairs; other semantics remain integration/community evidence |
@@ -532,6 +541,15 @@ Unit ID 1 issued the following sequence approximately every ten seconds:
 
 Every valid request receives exactly the requested word count.
 
+A later sanitized runtime log also shows Tibber repeatedly requesting FC4
+`33070/26` (`33070–33095`). The captured responses had zeroes at the AC
+voltage, current, and inverter-active-power words before this telemetry was
+implemented. That read establishes consumer interest in the block, not the
+register meanings or a cause of missing historical graphs. This profile now
+supplies `33073–33080` from the independent optional AC sources and the
+synthetic voltage policy described above. The other words in the block retain
+their existing ownership and baseline/zero behavior.
+
 ## Discovery, connection/hourly, and one-time observations
 
 The `DISCOVERY_READ_CASES` table preserves this ordered 2026-07-26 in-session
@@ -655,6 +673,18 @@ fake holding readback when `mirror_writes` is enabled; they never affect an
 input baseline or external system. A file reload replaces the two baselines
 atomically and never erases the overlay; restart clears it.
 
+The newly profile-owned `33073–33080` input words therefore cannot be seeded
+from `registers.json`. The fixed synthetic 230.0 V (`2300` raw) applies only
+where no HA voltage source is configured: at `33073` for every fake type and
+also at `33074–33075` for fake types `2050`/`2060`. Types `2030`/`2040` and
+all other type codes receive synthetic A only. Explicit HA sources take
+precedence on all channels, including B/C on a single-phase fake type. A
+configured source outage follows `inverter_ac_voltage_unavailable_behavior`
+(`zero` or `last_known`), never synthetic fallback. This is emulator policy,
+not a claim that the inverter is online or that a 3P3W line-to-line voltage
+equals 230 V. Inverter AC active power at `33079–33080` is never copied from
+PV/DC power at `33057–33058` or meter power at `33263–33264`.
+
 The only valid file shape is:
 
 ```json
@@ -681,4 +711,5 @@ acceptance, FC3 readback after the writes, cancellation, failsafe expiry, or
 proof of schedule execution. Before releasing 0.9.0, record those outcomes
 and which values Tibber displays. The supplied steady-state requests do not
 include `33029–33030` or `33035`, so loss of an energy display remains a known
-investigation point.
+investigation point. The later `33070/26` read shows that Tibber samples the
+AC block; it does not establish that populating it restores historical graphs.

@@ -2,8 +2,24 @@
 
 ## [Unreleased]
 
+### Added
+
+- Optional, independent inverter AC voltage A/B/C, current A/B/C, and signed
+  active-power sources for FC4 `33073–33080`, with shared per-kind scales and
+  unavailable policies. Inverter AC power has a configurable `direct` or
+  `negate` source-sign mapping; the protocol's positive direction is unresolved.
+- Fixed synthetic 230.0 V on unconfigured voltage channels: A for every fake
+  type, plus B/C for `2050`/`2060`. Explicit HA sources take precedence even
+  on B/C for a single-phase fake type; configured outages use the selected
+  `zero` or `last_known` policy. The fake voltage is not an online-status
+  signal or a physical 3P3W line-voltage measurement.
+
 ### Changed
 
+- `33073–33080` are profile-owned, so `registers.json` can no longer seed
+  those input addresses. AC active power remains separate from PV/DC and
+  meter power. Tibber has been observed reading the containing `33070/26`
+  block, but restoring its historical graphs is not yet verified.
 - Updated the development and CI lint toolchain to Ruff 0.16.0 and adopted
   its expanded default rule set.
 - Replaced the JSON interoperability fixtures and checksum sidecars with

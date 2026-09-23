@@ -220,6 +220,53 @@ used for `ha_sensor_grid_power`. Registers `33151–33152` describe the
 inverter's AC grid port; `33263–33264` describe meter total active power.
 When an option is blank, its profile-owned register remains zero.
 
+## Optional inverter AC telemetry
+
+Tibber has also been observed reading FC4 `33070/26`, which includes three AC
+voltage channels at `33073–33075`, three current channels at `33076–33078`,
+and inverter AC active power at `33079–33080`. Configure the corresponding
+Home Assistant sources independently of PV/DC power, meter power, AC grid-port
+power, and battery mode.
+
+| Option | Default | Meaning |
+|---|---:|---|
+| `ha_sensor_inverter_ac_voltage_a` | blank | AC voltage channel A |
+| `ha_sensor_inverter_ac_voltage_b` | blank | AC voltage channel B |
+| `ha_sensor_inverter_ac_voltage_c` | blank | AC voltage channel C |
+| `ha_sensor_inverter_ac_current_a` | blank | Nonnegative AC current channel A |
+| `ha_sensor_inverter_ac_current_b` | blank | Nonnegative AC current channel B |
+| `ha_sensor_inverter_ac_current_c` | blank | Nonnegative AC current channel C |
+| `ha_sensor_inverter_ac_power` | blank | Signed inverter AC active power |
+| `inverter_ac_voltage_scale` | `1.0` | Shared source-to-V multiplier for all three voltage channels |
+| `inverter_ac_current_scale` | `1.0` | Shared source-to-A multiplier for all three current channels |
+| `inverter_ac_power_scale` | `1.0` | Source-to-W multiplier |
+| `inverter_ac_power_sign_convention` | `direct` | `direct` preserves the source sign; `negate` reverses it |
+| `inverter_ac_voltage_unavailable_behavior` | `zero` | Shared `zero` or `last_known` policy for configured voltage sources |
+| `inverter_ac_current_unavailable_behavior` | `zero` | Shared `zero` or `last_known` policy for configured current sources |
+| `inverter_ac_power_unavailable_behavior` | `zero` | `zero` or `last_known` policy for configured AC power |
+
+Voltage and current use unsigned U16 values with 0.1 V/raw and 0.1 A/raw;
+for example, 230.0 V encodes as `2300`. Active power uses signed S32 watts,
+high word first. Scales convert each HA state to V, A, or W before wire
+encoding: use `1.0` for those units and `1000.0` for kV, kA, or kW.
+The Solis hybrid table does not establish whether positive inverter AC power
+means import or export; choose `direct` or `negate` to map your source sign,
+without treating either setting as a verified direction convention.
+
+An unconfigured voltage channel receives a fixed **synthetic 230.0 V**
+(`2300` raw) according to `fake_inverter_type_code`: channel A at `33073` for
+every type; channels B/C at `33074–33075` only for `2050` and `2060`.
+Types `2030` and `2040`, and all other type codes, get A only. A configured
+HA voltage source takes precedence on any channel, including B/C on a
+single-phase fake type. If a configured source becomes unavailable, its
+`zero` or `last_known` policy applies; synthetic voltage is never substituted
+for an outage. This synthetic value is not an online-status indicator or a
+physical measurement. A 3P3W inverter may report line-to-line voltage on
+these channels, which can differ from 230 V. Unconfigured currents and AC
+power remain zero. None of `33073–33080` can be overridden through
+`registers.json`. Populating this Tibber-read block has not been shown to
+restore historical Tibber graphs.
+
 ## Optional battery telemetry
 
 Set `battery_attached: true` only when both required battery sensors are

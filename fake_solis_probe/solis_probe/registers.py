@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import threading
 import time
@@ -55,6 +56,7 @@ PROFILE_INPUT_ADDRESSES = _address_set(
     (33029, 33030, 33035),  # total and daily PV generation
     (33057, 33058),  # total DC/PV power
     33069,  # HMI sub-version
+    range(33073, 33081),  # AC voltages, currents, and active power
     33121,  # operating-status bitfield
     (33135, 33139),  # battery direction and SoC
     (33147, 33148),  # household and backup load
@@ -116,6 +118,17 @@ METER_TYPE_CODES = {
     "eastron_3_phase": 0x05,
     "no_meter": 0x06,
 }
+
+
+def synthetic_ac_voltage_v(phase: str) -> float:
+    """Return the fake phase voltage for an unconfigured AC voltage channel."""
+    if phase == "a":
+        return 230.0
+    if phase in ("b", "c") and int(
+        config.OPTIONS.get("fake_inverter_type_code", 2030)
+    ) in (2050, 2060):
+        return 230.0
+    return 0.0
 
 
 def _require_int(value: int, label: str) -> int:
@@ -260,6 +273,13 @@ def initialize_profile_registers() -> None:
         for offset, word in enumerate(serial_words):
             PROFILE_INPUT_REGISTERS[33004 + offset] = word
         PROFILE_INPUT_REGISTERS[33069] = hmi_sub_version
+        for offset, phase in enumerate("abc"):
+            if not str(
+                config.OPTIONS.get(f"ha_sensor_inverter_ac_voltage_{phase}", "")
+            ).strip():
+                PROFILE_INPUT_REGISTERS[33073 + offset] = to_u16_word(
+                    math.floor(synthetic_ac_voltage_v(phase) * 10)
+                )
         PROFILE_INPUT_REGISTERS[33121] = 0x0001
         if smart_management_enabled:
             PROFILE_INPUT_REGISTERS[34502] = 0xAA55

@@ -140,7 +140,12 @@ def _range_reason(
     absolute: bool = False,
 ) -> str:
     checked = abs(value) if absolute else value
-    if checked < minimum or math.floor(checked * multiplier) > maximum_raw:
+    scaled = checked * multiplier
+    if (
+        checked < minimum
+        or not math.isfinite(scaled)
+        or math.floor(scaled) > maximum_raw
+    ):
         return "sample is outside the canonical register range"
     return ""
 
@@ -158,6 +163,21 @@ def update_live_registers() -> None:
     ac_grid_port_entity = str(
         config.OPTIONS.get("ha_sensor_ac_grid_port_power", "")
     ).strip()
+    ac_voltage_entities = {
+        phase: str(
+            config.OPTIONS.get(f"ha_sensor_inverter_ac_voltage_{phase}", "")
+        ).strip()
+        for phase in "abc"
+    }
+    ac_current_entities = {
+        phase: str(
+            config.OPTIONS.get(f"ha_sensor_inverter_ac_current_{phase}", "")
+        ).strip()
+        for phase in "abc"
+    }
+    inverter_ac_power_entity = str(
+        config.OPTIONS.get("ha_sensor_inverter_ac_power", "")
+    ).strip()
     battery_soc_entity = str(config.OPTIONS.get("ha_sensor_battery_soc", "")).strip()
     battery_power_entity = str(
         config.OPTIONS.get("ha_sensor_battery_power", "")
@@ -174,6 +194,9 @@ def update_live_registers() -> None:
             household_entity,
             backup_entity,
             ac_grid_port_entity,
+            *ac_voltage_entities.values(),
+            *ac_current_entities.values(),
+            inverter_ac_power_entity,
             battery_soc_entity if battery_attached else "",
             battery_power_entity if battery_attached else "",
         )
@@ -317,6 +340,56 @@ def update_live_registers() -> None:
             ),
         )
 
+    ac_voltage_values: dict[str, float | None] = {}
+    for phase, entity in ac_voltage_entities.items():
+        if not entity:
+            ac_voltage_values[phase] = registers.synthetic_ac_voltage_v(phase)
+            continue
+        ac_voltage_values[phase], _ = _resolve_metric(
+            f"inverter_ac_voltage_{phase}",
+            entity,
+            *cached(entity),
+            str(config.OPTIONS.get("inverter_ac_voltage_unavailable_behavior", "zero")),
+            float(config.OPTIONS.get("inverter_ac_voltage_scale", 1.0)),
+            lambda value: _range_reason(value, 0, config.U16_MAX, multiplier=10),
+        )
+
+    ac_current_values: dict[str, float | None] = {}
+    for phase, entity in ac_current_entities.items():
+        if not entity:
+            ac_current_values[phase] = 0.0
+            continue
+        ac_current_values[phase], _ = _resolve_metric(
+            f"inverter_ac_current_{phase}",
+            entity,
+            *cached(entity),
+            str(config.OPTIONS.get("inverter_ac_current_unavailable_behavior", "zero")),
+            float(config.OPTIONS.get("inverter_ac_current_scale", 1.0)),
+            lambda value: _range_reason(value, 0, config.U16_MAX, multiplier=10),
+        )
+
+    inverter_ac_power_value: float | None = 0.0
+    if inverter_ac_power_entity:
+        inverter_ac_power_value, _ = _resolve_metric(
+            "inverter_ac_power",
+            inverter_ac_power_entity,
+            *cached(inverter_ac_power_entity),
+            str(config.OPTIONS.get("inverter_ac_power_unavailable_behavior", "zero")),
+            float(config.OPTIONS.get("inverter_ac_power_scale", 1.0)),
+            lambda value: (
+                ""
+                if config.S32_MIN
+                <= math.trunc(
+                    -value
+                    if config.OPTIONS.get("inverter_ac_power_sign_convention", "direct")
+                    == "negate"
+                    else value
+                )
+                <= config.S32_MAX
+                else "sample is outside the signed 32-bit AC power range"
+            ),
+        )
+
     battery_soc_value: float | None = 0.0
     battery_power_value: float | None = 0.0
     if battery_attached:
@@ -388,6 +461,28 @@ def update_live_registers() -> None:
         ac_grid_port_pair = registers.to_s32_pair(ac_grid_port_w)
     else:
         ac_grid_port_pair = None
+    ac_voltage_words = {
+        phase: registers.to_u16_word(math.floor(value * 10))
+        if value is not None
+        else None
+        for phase, value in ac_voltage_values.items()
+    }
+    ac_current_words = {
+        phase: registers.to_u16_word(math.floor(value * 10))
+        if value is not None
+        else None
+        for phase, value in ac_current_values.items()
+    }
+    if inverter_ac_power_value is not None:
+        inverter_ac_power_w = math.trunc(inverter_ac_power_value)
+        if (
+            config.OPTIONS.get("inverter_ac_power_sign_convention", "direct")
+            == "negate"
+        ):
+            inverter_ac_power_w = -inverter_ac_power_w
+        inverter_ac_power_pair = registers.to_s32_pair(inverter_ac_power_w)
+    else:
+        inverter_ac_power_pair = None
     battery_soc_word = (
         registers.to_u16_word(math.floor(battery_soc_value))
         if battery_soc_value is not None
@@ -498,6 +593,17 @@ def update_live_registers() -> None:
         if ac_grid_port_pair is not None:
             registers.PROFILE_INPUT_REGISTERS[33151] = ac_grid_port_pair[0]
             registers.PROFILE_INPUT_REGISTERS[33152] = ac_grid_port_pair[1]
+
+        for offset, phase in enumerate("abc"):
+            voltage_word = ac_voltage_words[phase]
+            current_word = ac_current_words[phase]
+            if voltage_word is not None:
+                registers.PROFILE_INPUT_REGISTERS[33073 + offset] = voltage_word
+            if current_word is not None:
+                registers.PROFILE_INPUT_REGISTERS[33076 + offset] = current_word
+        if inverter_ac_power_pair is not None:
+            registers.PROFILE_INPUT_REGISTERS[33079] = inverter_ac_power_pair[0]
+            registers.PROFILE_INPUT_REGISTERS[33080] = inverter_ac_power_pair[1]
 
         if battery_soc_word is not None:
             registers.PROFILE_INPUT_REGISTERS[33139] = battery_soc_word

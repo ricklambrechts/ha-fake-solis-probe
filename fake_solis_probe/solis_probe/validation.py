@@ -218,6 +218,24 @@ def _validate_power_metadata(
         )
 
 
+def _validate_ac_measurement_metadata(
+    errors: list[str],
+    option: str,
+    payload: dict[str, Any],
+    device_class: str,
+) -> None:
+    attributes = payload.get("attributes")
+    if not isinstance(attributes, dict):
+        return
+    declared = attributes.get("device_class")
+    if declared not in (None, "", device_class):
+        _append_error(
+            errors,
+            option,
+            f"must use an entity with device_class '{device_class}' when declared",
+        )
+
+
 def _validate_metric_range(
     errors: list[str],
     option: str,
@@ -258,6 +276,23 @@ def _validate_metric_range(
     elif kind == "ac_grid_port_power":
         convention = str(
             config.OPTIONS.get("ac_grid_port_power_sign_convention", "direct")
+        )
+        canonical = -physical if convention == "negate" else physical
+        raw = math.trunc(canonical)
+        valid = config.S32_MIN <= raw <= config.S32_MAX
+        expectation = "must fit signed 32-bit watts after scaling and sign conversion"
+    elif kind in ("inverter_ac_voltage", "inverter_ac_current"):
+        raw_tenths = physical * 10
+        valid = (
+            physical >= 0
+            and math.isfinite(raw_tenths)
+            and math.floor(raw_tenths) <= config.U16_MAX
+        )
+        unit = "V" if kind == "inverter_ac_voltage" else "A"
+        expectation = f"must resolve to nonnegative U16 tenths of {unit} after scaling"
+    elif kind == "inverter_ac_power":
+        convention = str(
+            config.OPTIONS.get("inverter_ac_power_sign_convention", "direct")
         )
         canonical = -physical if convention == "negate" else physical
         raw = math.trunc(canonical)
@@ -329,6 +364,27 @@ def validate_config() -> bool:
             "must be 'negate' or 'direct'",
         )
 
+    for scale_option in (
+        "inverter_ac_voltage_scale",
+        "inverter_ac_current_scale",
+        "inverter_ac_power_scale",
+    ):
+        _positive_finite_option(errors, scale_option)
+    for behavior_option in (
+        "inverter_ac_voltage_unavailable_behavior",
+        "inverter_ac_current_unavailable_behavior",
+        "inverter_ac_power_unavailable_behavior",
+    ):
+        _behavior_option(errors, behavior_option)
+    inverter_ac_power_sign = str(
+        config.OPTIONS.get("inverter_ac_power_sign_convention", "")
+    ).strip()
+    if inverter_ac_power_sign not in ("direct", "negate"):
+        _append_error(
+            errors,
+            "inverter_ac_power_sign_convention",
+            "must be 'direct' or 'negate'",
+        )
     smart_management_enabled = config.OPTIONS.get(
         "smart_management_enabled",
         False,
@@ -511,6 +567,41 @@ def validate_config() -> bool:
             )
         )
 
+    for phase in "abc":
+        voltage_option = f"ha_sensor_inverter_ac_voltage_{phase}"
+        current_option = f"ha_sensor_inverter_ac_current_{phase}"
+        if str(config.OPTIONS.get(voltage_option, "")).strip():
+            metric_specs.append(
+                (
+                    voltage_option,
+                    "inverter_ac_voltage_scale",
+                    "inverter_ac_voltage_unavailable_behavior",
+                    "inverter_ac_voltage",
+                    True,
+                )
+            )
+        if str(config.OPTIONS.get(current_option, "")).strip():
+            metric_specs.append(
+                (
+                    current_option,
+                    "inverter_ac_current_scale",
+                    "inverter_ac_current_unavailable_behavior",
+                    "inverter_ac_current",
+                    True,
+                )
+            )
+
+    if str(config.OPTIONS.get("ha_sensor_inverter_ac_power", "")).strip():
+        metric_specs.append(
+            (
+                "ha_sensor_inverter_ac_power",
+                "inverter_ac_power_scale",
+                "inverter_ac_power_unavailable_behavior",
+                "inverter_ac_power",
+                True,
+            )
+        )
+
     if battery_attached:
         battery_sign = str(
             config.OPTIONS.get("battery_power_sign_convention", "")
@@ -640,8 +731,13 @@ def validate_config() -> bool:
             "household_load",
             "backup_load",
             "ac_grid_port_power",
+            "inverter_ac_power",
         ):
             _validate_power_metadata(errors, entity_option, payload)
+        elif kind == "inverter_ac_voltage":
+            _validate_ac_measurement_metadata(errors, entity_option, payload, "voltage")
+        elif kind == "inverter_ac_current":
+            _validate_ac_measurement_metadata(errors, entity_option, payload, "current")
 
         before = len(errors)
         value = _state_number(errors, entity_option, payload)

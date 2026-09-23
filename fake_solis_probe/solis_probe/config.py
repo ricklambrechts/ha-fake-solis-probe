@@ -61,6 +61,20 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     "ac_grid_port_power_scale": 1.0,
     "ac_grid_port_power_sign_convention": "direct",
     "ac_grid_port_power_unavailable_behavior": "zero",
+    "ha_sensor_inverter_ac_voltage_a": "",
+    "ha_sensor_inverter_ac_voltage_b": "",
+    "ha_sensor_inverter_ac_voltage_c": "",
+    "ha_sensor_inverter_ac_current_a": "",
+    "ha_sensor_inverter_ac_current_b": "",
+    "ha_sensor_inverter_ac_current_c": "",
+    "ha_sensor_inverter_ac_power": "",
+    "inverter_ac_voltage_scale": 1.0,
+    "inverter_ac_current_scale": 1.0,
+    "inverter_ac_power_scale": 1.0,
+    "inverter_ac_voltage_unavailable_behavior": "zero",
+    "inverter_ac_current_unavailable_behavior": "zero",
+    "inverter_ac_power_unavailable_behavior": "zero",
+    "inverter_ac_power_sign_convention": "direct",
     "smart_management_enabled": False,
     "smart_management_max_charge_soc": 95,
     "smart_management_min_soc": 20,
@@ -165,6 +179,13 @@ def enabled_sensor_keys() -> list[str]:
         keys.append("ha_sensor_backup_load_power")
     if str(OPTIONS.get("ha_sensor_ac_grid_port_power", "")).strip():
         keys.append("ha_sensor_ac_grid_port_power")
+    for phase in "abc":
+        for measurement in ("voltage", "current"):
+            key = f"ha_sensor_inverter_ac_{measurement}_{phase}"
+            if str(OPTIONS.get(key, "")).strip():
+                keys.append(key)
+    if str(OPTIONS.get("ha_sensor_inverter_ac_power", "")).strip():
+        keys.append("ha_sensor_inverter_ac_power")
     if bool(OPTIONS.get("battery_attached", False)):
         keys.extend(("ha_sensor_battery_soc", "ha_sensor_battery_power"))
     return keys

@@ -37,6 +37,13 @@ options:
   ha_sensor_household_load_power: ""
   ha_sensor_backup_load_power: ""
   ha_sensor_ac_grid_port_power: ""
+  ha_sensor_inverter_ac_voltage_a: ""
+  ha_sensor_inverter_ac_voltage_b: ""
+  ha_sensor_inverter_ac_voltage_c: ""
+  ha_sensor_inverter_ac_current_a: ""
+  ha_sensor_inverter_ac_current_b: ""
+  ha_sensor_inverter_ac_current_c: ""
+  ha_sensor_inverter_ac_power: ""
   battery_attached: false
   ha_sensor_battery_soc: ""
   ha_sensor_battery_power: ""
@@ -49,6 +56,13 @@ options:
   household_load_power_scale: 1.0
   backup_load_power_scale: 1.0
   ac_grid_port_power_scale: 1.0
+  inverter_ac_voltage_scale: 1.0
+  inverter_ac_current_scale: 1.0
+  inverter_ac_power_scale: 1.0
+  inverter_ac_voltage_unavailable_behavior: "zero"
+  inverter_ac_current_unavailable_behavior: "zero"
+  inverter_ac_power_unavailable_behavior: "zero"
+  inverter_ac_power_sign_convention: "direct"
   battery_soc_scale: 1.0
   battery_power_scale: 1.0
   pv_power_unavailable_behavior: "zero"
@@ -107,6 +121,13 @@ schema:
   ha_sensor_household_load_power: str
   ha_sensor_backup_load_power: str
   ha_sensor_ac_grid_port_power: str
+  ha_sensor_inverter_ac_voltage_a: str
+  ha_sensor_inverter_ac_voltage_b: str
+  ha_sensor_inverter_ac_voltage_c: str
+  ha_sensor_inverter_ac_current_a: str
+  ha_sensor_inverter_ac_current_b: str
+  ha_sensor_inverter_ac_current_c: str
+  ha_sensor_inverter_ac_power: str
   battery_attached: bool
   ha_sensor_battery_soc: str
   ha_sensor_battery_power: str
@@ -119,6 +140,13 @@ schema:
   household_load_power_scale: float
   backup_load_power_scale: float
   ac_grid_port_power_scale: float
+  inverter_ac_voltage_scale: float
+  inverter_ac_current_scale: float
+  inverter_ac_power_scale: float
+  inverter_ac_voltage_unavailable_behavior: list(zero|last_known)
+  inverter_ac_current_unavailable_behavior: list(zero|last_known)
+  inverter_ac_power_unavailable_behavior: list(zero|last_known)
+  inverter_ac_power_sign_convention: list(direct|negate)
   battery_soc_scale: float
   battery_power_scale: float
   pv_power_unavailable_behavior: list(zero|last_known)

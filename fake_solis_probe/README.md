@@ -68,6 +68,9 @@ Scales are independent, positive, finite source-to-physical-unit multipliers.
 | Household load | `household_load_power_scale` | `1.0` | U16 W at `33147` |
 | Backup load | `backup_load_power_scale` | `1.0` | U16 W at `33148` |
 | AC grid-port power | `ac_grid_port_power_scale` | `1.0` | S32 W at `33151–33152` |
+| Inverter AC voltage A/B/C | `inverter_ac_voltage_scale` | `1.0` | U16, 0.1 V/raw at `33073–33075` |
+| Inverter AC current A/B/C | `inverter_ac_current_scale` | `1.0` | U16, 0.1 A/raw at `33076–33078` |
+| Inverter AC active power | `inverter_ac_power_scale` | `1.0` | S32 W at `33079–33080` |
 
 For energy sources, use `1.0` for kWh, `0.001` for Wh, or `1000.0` for
 MWh. For power, use `1.0` for W or `1000.0` for kW.
@@ -81,6 +84,9 @@ MWh. For power, use `1.0` for W or `1000.0` for kW.
 | `household_load_power_unavailable_behavior` | `zero` |
 | `backup_load_power_unavailable_behavior` | `zero` |
 | `ac_grid_port_power_unavailable_behavior` | `zero` |
+| `inverter_ac_voltage_unavailable_behavior` | `zero` |
+| `inverter_ac_current_unavailable_behavior` | `zero` |
+| `inverter_ac_power_unavailable_behavior` | `zero` |
 
 Every unavailable policy in this App accepts `zero` or `last_known`.
 
@@ -147,6 +153,49 @@ negative import/from-grid.
 The AC grid-port source must represent the inverter port itself. It is not a
 second copy of the meter/net-grid sensor at `33263–33264`.
 
+## Optional inverter AC voltage, current, and active power
+
+These independent sources populate the AC words within Tibber's observed FC4
+`33070/26` read. They are optional and do not depend on battery mode.
+
+| Option | Default | Meaning |
+|---|---:|---|
+| `ha_sensor_inverter_ac_voltage_a` | blank | AC voltage channel A |
+| `ha_sensor_inverter_ac_voltage_b` | blank | AC voltage channel B |
+| `ha_sensor_inverter_ac_voltage_c` | blank | AC voltage channel C |
+| `ha_sensor_inverter_ac_current_a` | blank | Nonnegative AC current channel A |
+| `ha_sensor_inverter_ac_current_b` | blank | Nonnegative AC current channel B |
+| `ha_sensor_inverter_ac_current_c` | blank | Nonnegative AC current channel C |
+| `ha_sensor_inverter_ac_power` | blank | Signed inverter AC active power |
+| `inverter_ac_voltage_scale` | `1.0` | Shared source-to-V multiplier |
+| `inverter_ac_current_scale` | `1.0` | Shared source-to-A multiplier |
+| `inverter_ac_power_scale` | `1.0` | Source-to-W multiplier |
+| `inverter_ac_power_sign_convention` | `direct` | Preserve source sign; `negate` reverses it |
+| `inverter_ac_voltage_unavailable_behavior` | `zero` | Shared `zero` or `last_known` policy |
+| `inverter_ac_current_unavailable_behavior` | `zero` | Shared `zero` or `last_known` policy |
+| `inverter_ac_power_unavailable_behavior` | `zero` | `zero` or `last_known` policy |
+
+Voltages and currents encode as nonnegative U16 at 0.1 V/raw and 0.1 A/raw;
+230.0 V becomes raw `2300`. Active power encodes as high-word-first S32 at
+1 W/raw. Use scale `1.0` for V, A, or W and `1000.0` for kV, kA, or kW.
+The Solis hybrid table does not resolve the positive/negative direction of
+inverter AC active power, so `direct` and `negate` describe only how the HA
+source sign is mapped.
+
+When a voltage source is blank, the app emits fixed synthetic 230.0 V
+(`2300` raw) at A (`33073`) for every `fake_inverter_type_code`. Types `2050`
+and `2060` also receive synthetic B/C (`33074–33075`); types `2030` and
+`2040`, and every other type, receive A only. An explicit HA voltage source
+takes precedence on any channel, including B/C on a single-phase fake type.
+An unavailable configured source uses the selected `zero` or `last_known`
+policy, never the synthetic value. Synthetic voltage **does not indicate that
+an inverter is online** and is not a physical measurement. A 3P3W inverter
+may report line-to-line voltage, which can differ from 230 V. Unconfigured
+current and AC-power sources stay at zero. Inverter AC power is not copied
+from PV/DC power at `33057–33058` or meter power at `33263–33264`. The
+observed Tibber read does not prove these additions will restore historical
+graphs.
+
 ## Optional battery telemetry
 
 | Option | Default |
@@ -191,6 +240,9 @@ Multiword values are high-word first and bytes are big-endian.
 | `33035` | U16 | Daily PV generation, 0.1 kWh/raw |
 | `33057–33058` | U32 | Total DC/PV power, 1 W/raw |
 | `33069` | U16 | Validated `fake_hmi_sub_version` discovery value |
+| `33073–33075` | 3 × U16 | Optional AC voltage A/B/C, 0.1 V/raw; unconfigured channels get synthetic 230.0 V at A for every fake type and at B/C for `2050`/`2060` |
+| `33076–33078` | 3 × U16 | Optional AC current A/B/C, 0.1 A/raw; otherwise zero |
+| `33079–33080` | S32 | Optional independent inverter AC active power W; otherwise zero |
 | `33121` | U16 | Operating status `0x0001` |
 | `33135` | U16 | Battery direction when enabled; otherwise zero |
 | `33139` | U16 | Battery SoC percent when enabled; otherwise zero |
@@ -258,8 +310,8 @@ Rules:
 - Each bank must be an object whose addresses are decimal JSON strings.
 - Addresses must be `0..65535`.
 - Values must be JSON integers in `0..65535`; they are never masked or wrapped.
-- Any profile-owned address, including `35000`, the observed smart-management
-  holdings, and `44100–44199`, is rejected in its bank.
+- Any profile-owned address, including `33073–33080`, `35000`, the observed
+  smart-management holdings, and `44100–44199`, is rejected in its bank.
 - A legacy flat object is rejected.
 
 An invalid file present at startup prevents the Modbus server from opening.
