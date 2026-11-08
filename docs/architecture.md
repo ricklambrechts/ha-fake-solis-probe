@@ -10,9 +10,9 @@ inverter.
 The physical PV source may use any Home Assistant integration. That does not
 change the emulated wire family: string-inverter, Smart Port,
 parallel-inverter, and physical charging-control profiles remain outside the
-base profile. Version 0.9.0 adds an experimental opt-in smart-management
-register model, but its writes and runtime state exist only inside this fake
-process.
+base profile. The unreleased experimental opt-in smart-management register
+model uses fake V02 real-time semantics; its writes and runtime state exist
+only inside this process. V02 TOU schedules and V03 are not supported.
 
 ## Source layout
 
@@ -202,24 +202,27 @@ cleared on restart.
 ### Experimental smart-management state
 
 With `smart_management_enabled: true`, input register `34502` is `0xAA55` and
-`34503` is `0x0001`, advertising V01 remote dispatch. `34504` tracks only the
-fake runtime state:
+`34503` is `0x0002`, advertising V02 remote dispatch. `34504` tracks only fake
+traffic in its low byte:
 
 - `0`: not running;
 - `1`: default-settings activity;
 - `2`: real-time activity;
 - `3`: a nonzero raw time-of-use write.
 
-An all-zero TOU write reports status 1. This status classifies accepted fake
-traffic; it does not claim that a schedule is executing.
+An all-zero TOU write reports status 1. For real-time status 2, the high byte
+contains the accepted fake `44105` mode; it is zero for the other statuses.
+Neither byte claims a physical operating mode or executing schedule.
 
-Profile options initialize semantic defaults for the observed legacy holdings
-and `44100–44110`. FC6/FC16 writes can mirror defined words in
-`44100–44199`; protocol-reserved gaps remain protected zeroes. Words beyond
-the semantic defaults—including time-of-use schedule words—are opaque
-readback only; there is no schedule parser or charge controller. Invalid
-profile values retain their previous readback. A value of `0xFFFF` at
-`44103` or `44104` restores the configured default for that word.
+Profile options initialize the observed legacy holdings and `44100–44110`;
+the V02 reserve word `44111` defaults to 40%. FC6/FC16 writes can mirror
+defined words in `44100–44199`; reserved gaps remain protected zeroes. The
+fake accepts valid `44108` V02 words as complete raw commands and does not
+infer physical field-by-field readback. **TOU schedules are not supported**:
+their writable words are opaque readback only, with no decoder, validator,
+scheduler, execution, or charge controller. Invalid profile values retain
+their previous readback. A value of `0xFFFF` at `44103` or `44104` restores
+the configured default for that word.
 
 The monotonic in-memory failsafe uses `44101`. When it expires, the App clears
 the fake `44100` main switch and `34504` status. With no TOU clock or schedule
@@ -314,8 +317,8 @@ Sanitized request-shape and synthetic before/after parameter tables in
 verify the software contract. The 2026-07-26 runtime evidence confirms a
 physical discovery burst, continued polling with response bytes, and three
 acknowledged two-frame FC16 Remote Dispatch bursts in a session associated
-with smart scheduling. Each real-time frame contains a V01-invalid `44108`
-word and is mirrored only for its other five words; the last also carries a
-signed 2.61 kW discharge target. Post-write FC3 readback, cancellation,
-failsafe expiry, pairing/UI acceptance, displayed values, and schedule
-execution remain verification requirements for 0.9.0.
+with smart scheduling. The observed `44108` words were invalid under V01 but
+round-trip under the fake V02 profile; the last frame also carries a signed
+2.61 kW discharge target. The July excerpt did not establish post-write FC3
+readback, cancellation, failsafe expiry, pairing/UI acceptance, displayed
+values, or schedule execution. The App does not execute schedules or commands.

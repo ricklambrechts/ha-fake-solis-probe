@@ -296,21 +296,21 @@ REMOTE_DISPATCH_BURSTS = (
         0,
         (1, 27, 3, 30, 30),
         (2, 0, 0, 0x0820, 0, 100),
-        (1, 27, 3, 30, 30, 2, 0, 0, 0, 0, 100),
+        (1, 27, 3, 30, 30, 2, 0, 0, 0x0820, 0, 100),
     ),
     RemoteDispatchBurst(
         2,
         907,
         (1, 12, 3, 30, 30),
         (2, 0, 0, 0x0820, 0, 100),
-        (1, 12, 3, 30, 30, 2, 0, 0, 0, 0, 100),
+        (1, 12, 3, 30, 30, 2, 0, 0, 0x0820, 0, 100),
     ),
     RemoteDispatchBurst(
         3,
         1058,
         (1, 24, 3, 30, 0),
         (2, 0xFFFF, 0xFEFB, 0x0410, 20, 95),
-        (1, 24, 3, 30, 0, 2, 0xFFFF, 0xFEFB, 0, 20, 95),
+        (1, 24, 3, 30, 0, 2, 0xFFFF, 0xFEFB, 0x0410, 20, 95),
     ),
 )
 
@@ -923,13 +923,13 @@ def test_observed_tibber_remote_dispatch_fc16_bursts(
         )
 
     assert module.read_holding_registers(44100, 11) == list(burst.expected_readback)
-    assert 44108 not in module.HOLDING_WRITE_OVERLAY
-    assert module.read_input_registers(34504, 1) == [2]
+    assert module.HOLDING_WRITE_OVERLAY[44108] == burst.realtime_words[3]
+    assert module.read_input_registers(34504, 1) == [0x0202]
     assert [
         (event["previous"], event["current"])
         for event in events
         if event["kind"] == "remote_dispatch_status_changed"
-    ] == [(0, 1), (1, 2)]
+    ] == [(0, 1), (1, 0x0202)]
 
     write_events = [
         event for event in events if event["kind"] == "modbus_write_multiple_registers"
@@ -944,7 +944,7 @@ def test_observed_tibber_remote_dispatch_fc16_bursts(
         for event in write_events
     ] == [
         (44100, 5, 5, 0),
-        (44105, 6, 5, 1),
+        (44105, 6, 6, 0),
     ]
 
 
@@ -965,7 +965,7 @@ class SmartManagementProfileTests(ProbeTestCase):
         self.assertEqual(self.module.read_input_registers(33067, 3), [0, 0, 7])
         self.assertEqual(
             self.module.read_input_registers(34502, 3),
-            [0xAA55, 1, 0],
+            [0xAA55, 2, 0],
         )
         self.assertEqual(self.module.read_holding_registers(43010, 2), [95, 20])
         self.assertEqual(self.module.read_holding_registers(43052, 1), [10000])
@@ -981,6 +981,7 @@ class SmartManagementProfileTests(ProbeTestCase):
             self.module.read_holding_registers(44100, 11),
             [0, 5, 0, 0, 0, 1, 0, 0, 0, 20, 95],
         )
+        self.assertEqual(self.module.read_holding_registers(44111, 1), [40])
 
     def test_remote_dispatch_writes_are_fake_atomic_readback_with_status(self):
         response = process_pdu(self.module, write_single_pdu(44100, 1))
@@ -1000,7 +1001,7 @@ class SmartManagementProfileTests(ProbeTestCase):
             self.module.read_holding_registers(44105, 3),
             [2, 0xFFFF, 0xFF9C],
         )
-        self.assertEqual(self.module.read_input_registers(34504, 1), [2])
+        self.assertEqual(self.module.read_input_registers(34504, 1), [0x0202])
 
         process_pdu(self.module, write_single_pdu(44116, 1))
         self.assertEqual(self.module.read_input_registers(34504, 1), [3])
@@ -1038,7 +1039,8 @@ class SmartManagementProfileTests(ProbeTestCase):
             43484,
             43485,
             43486,
-            44111,
+            44112,
+            44115,
             44124,
             44139,
             44153,
@@ -1059,10 +1061,10 @@ class SmartManagementProfileTests(ProbeTestCase):
             (44100, 2),
             (44101, 0),
             (44102, 4),
-            (44105, 5),
+            (44105, 7),
+            (44108, 0),
             (44108, 3),
-            (44108, 0x0820),
-            (44108, 0x0410),
+            (44108, 0x4000),
             (44109, 96),
             (44110, 19),
         )

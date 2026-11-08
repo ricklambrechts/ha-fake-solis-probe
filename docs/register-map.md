@@ -61,10 +61,45 @@ Evidence is applied in this order:
 
 The existing base-profile rows below remain the implementation contract, not a
 new source of protocol evidence. New or changed semantic claims still require
-one of the evidence sources above.
+one of the evidence sources above or the V02 source documented below.
 
 An unresolved meaning, type, scale, sign, or model applicability is not
 guessed. The base profile leaves it unowned or explicitly blocks it at zero.
+
+### Remote Dispatch V02 source review
+
+The Solis-hosted [RS485_MODBUS (ESINV-33000ID) Hybrid Inverter table](https://oss.soliscloud.com/file/RS485_MODBUS%28ESINV-33000ID%29%20Hybrid%20Inverter.pdf)
+was retrieved on 2026-11-08 with SHA-256
+`49bff58ddfbf91f7f9d7e8e3e879f8abb6efcb0237d3a7e6249c55c317f0b7fb`.
+Pages 33–34 and 114 distinguish Remote Dispatch V01, V02, and V03; pages
+118–120 describe the real-time fields. This URL is not immutable: the digest
+identifies the reviewed content. The user-linked
+[`solis_modbus` commit `eeb66b627b4d9ae754ab2645b279731149f7b632`](https://github.com/Pho3niX90/solis_modbus/blob/eeb66b627b4d9ae754ab2645b279731149f7b632/custom_components/solis_modbus/__init__.py#L188-L205)
+is an immutable snapshot of a client constructing outgoing dispatch words; it
+is not evidence of physical-inverter readback. The Solis table is a hybrid
+protocol reference, not proof that the emulator's selected fake identity and
+firmware match a particular supported physical device.
+
+The table's V02 changes include the following real-time fields. The unreleased
+fake V02 real-time profile below emulates their documented shapes entirely in
+memory; this is not a claim about a physical device's behavior.
+
+| Address | Bank / FC | Representation | V02 meaning | Tibber observed |
+|---|---|---|---|---|
+| `34503` | input / FC4 | U16 | `2` indicates function version V02 when `34502 = 0xAA55` | inside discovery `34502/2` |
+| `34504` | input / FC4 | U16; status low byte, mode high byte | fake status and mode require explicitly documented emulator behavior | not in supplied discovery or steady-state reads |
+| `44105` | holding / FC3, FC6, FC16 | U16 | V02 adds mode 5 self-use and 6 feed-in priority | inside FC16 `44105/6` |
+| `44108` | holding / FC3, FC6, FC16 | U16; high byte first; two-bit fields | V02 adds reserve at bits 8–9, discharge prohibition at 10–11, demand control at 12–13; bits 14–15 are V03-only | inside FC16 `44105/6`; later FC3 readback observed |
+| `44111` | holding / FC3, FC6, FC16 | U16, 1%/raw | real-time reserve SoC; default 40%, range from `43011` to `44110` | not in the supplied FC16 burst |
+
+For `44108`, field values 1 and 2 select the documented off/on or
+allowed/not-allowed function, while 3 is invalid and 0 is described as invalid
+or no request. The official example retains a previous word after an all-zero
+write; it does not establish how individual zero fields are merged in a mixed
+write. The table describes `44109` and `44110` as requiring a strict
+lower-than-upper relationship, unlike the old fake's acceptance of equality.
+It gives the `44111` range without an explicit equality example. Record any
+fake choices for these cases rather than claiming physical-device behavior.
 
 ### Supplemental source snapshots and conflicts
 
@@ -118,7 +153,7 @@ hybrid profile.
 
 ## Canonical hybrid telemetry
 
-“Ownership” describes the 0.9.0 profile:
+“Ownership” describes the current base profile:
 
 - **live**: profile-owned and supplied by validated App options;
 - **fixed/reserved**: profile-owned identity, status, disabled optional
@@ -129,7 +164,7 @@ Every row in this section belongs to the reconciled base hybrid contract unless
 the basis or ownership column explicitly limits it to a future feature
 profile. None of these rows authorizes a string-inverter mapping.
 
-| Address | Bank / FC | Representation and order | Physical meaning and scale/sign | 0.9.0 ownership | Tibber observed | Basis |
+| Address | Bank / FC | Representation and order | Physical meaning and scale/sign | Current ownership | Tibber observed | Basis |
 |---|---|---|---|---|---|---|
 | `33000–33003` | input / FC4 | 4 × U16 | Model, DSP, HMI, protocol versions | fixed/reserved; zero | inside `33000/20` discovery read | pinned plugin; stable catalogue naming; request-shape table |
 | `33004–33019` | input / FC4 | 16 U16 ASCII words, high byte first | Inverter serial, 32 encoded bytes, zero-padded | fixed/reserved from `fake_serial` | historical `33004/15`; complete field inside `33000/20` | community consolidation; pinned plugin; stable catalogue span; request-shape tables |
@@ -315,9 +350,10 @@ Enabling the option requires `mirror_writes: true` and exposes only an
 in-memory fake control target:
 
 - `34502 = 0xAA55` advertises the Smart Control effective-function flag;
-- `34503 = 0x0001` advertises V01;
-- `34504` reports fake dispatch status: `0=not running`, `1=default/system`,
-  `2=real-time`, or `3=time-of-use`;
+- `34503 = 0x0002` advertises V02;
+- `34504` has fake traffic status in the low byte: `0=inactive`,
+  `1=default/system`, `2=real-time`, or `3=nonzero raw TOU write`; only for
+  status 2, its high byte contains the accepted fake real-time mode;
 - accepted FC6/FC16 writes update fake holding-register readback only;
 - no write is forwarded to Home Assistant, a physical inverter, a battery, or
   any other equipment.
@@ -428,7 +464,8 @@ The `437xx` integration family is distinct from official Remote Dispatch
 
 ### Remote Dispatch `44100–44199`
 
-The implemented semantic core follows Smart Control V1.0:
+The fake real-time core uses the V02 fields in the Solis hybrid table. It does
+not implement V02 TOU schedules or V03:
 
 | Address | Representation | Official meaning and fake behavior |
 |---|---|---|
@@ -437,41 +474,43 @@ The implemented semantic core follows Smart Control V1.0:
 | `44102` | U16 bitfield | bit 0 import limit, bit 1 export limit; bits 2–15 are officially reserved and the fake rejects them when nonzero |
 | `44103` | U16, 100 W/raw | import limit; conservative fake default zero |
 | `44104` | U16, 100 W/raw | export limit; fake default from `smart_management_backflow_limit_w` |
-| `44105` | U16 | real-time mode: `1=standby`, `2=battery`, `3=grid point`, `4=AC grid port` |
+| `44105` | U16 | real-time mode: `1=standby`, `2=battery`, `3=grid point`, `4=AC grid port`, `5=self-use`, `6=feed-in priority` |
 | `44106–44107` | S32 at 10 W/raw; fake encoding is high-word first | real-time signed target; in mode 2, negative is discharge and positive is charge; in modes 3–4, negative is import and positive is export; fake default zero |
-| `44108` | U16 packed 2-bit fields | bits `0–7` hold PV shutdown, DO, grid-charge permission, and off-grid battery standby; bits `8–15` are officially reserved and rejected by the fake when nonzero |
-| `44109–44110` | 2 × U16, 1%/raw | lower and upper SoC limits |
-| `44111–44115` | reserved | profile-owned zero; writes ignored |
+| `44108` | U16 packed 2-bit fields | bits `0–7` hold PV shutdown, DO, grid-charge permission, and off-grid standby; V02 adds reserve `8–9`, discharge prohibition `10–11`, and demand control `12–13`; V03 bits `14–15` are rejected |
+| `44109–44110` | 2 × U16, 1%/raw | lower and upper SoC limits; the fake requires `0 ≤ lower < upper ≤ 100` |
+| `44111` | U16, 1%/raw | fake real-time reserve SoC, default 40%; accepted from current `43011` through current `44110`, inclusive |
+| `44112–44115` | reserved / V03 | profile-owned zero; writes ignored |
 | `44116–44199` | U16 words | TOU blocks; effective words are raw fake mirror only and protected gaps remain zero |
 
-The default enabled readback at `44100–44110` is
-`[0, 5, 0, 0, 0, 1, 0, 0, 0, 20, 95]`.
+The default enabled readback at `44100–44111` is
+`[0, 5, 0, 0, 0, 1, 0, 0, 0, 20, 95, 40]`.
 
 Smart Control defines `44106` as S32 at 10 W/raw but does not explicitly state
 the two-word order. High-word-first is the reconciled fake encoding; the
 observed Tibber payload is consistent with it but is consumer behavior, not
 semantic authority.
 
-Each `44108` two-bit field defines values 1 and 2, calls 3 invalid, calls 0
-invalid while also using 0 as the documented default, and says an invalid
-function-switch write retains the prior setting. The fake resolves that
-document inconsistency by accepting 0 as default/no request, accepting the
-defined 1/2 values, and rejecting 3 or any nonzero reserved bit. Rejection of
-reserved bits is strict fake V01 validation; the document marks them reserved
-but does not separately prescribe that rejection rule.
+Each `44108` two-bit field defines values 1 and 2 and calls 3 invalid; the
+document also calls 0 invalid while using it as the default. It says an invalid
+whole-register write retains the previous value and gives `1` followed by `0`
+as an example. The fake rejects an all-zero write, any field value 3, and V03
+bits 14–15. In a mixed valid word, zero fields mean no request, and the fake
+mirrors the complete raw command without merging fields. This is an explicit
+fake readback choice, not proof of a physical inverter's individual-field
+readback. FC6/FC16 still acknowledge rejected fake words.
 
-Observed Tibber writes used `44108 = 0x0820` and later `0x0410`. Their defined
-low-byte fields at bits `4–5` are respectively `2` (grid charging not allowed)
-and `1` (grid charging allowed), while the values also set reserved bits 11
-and 10. The fake profile therefore acknowledges each containing FC16 request,
-rejects that whole word, and mirrors the other valid words. The repeated
-low-field duplication into reserved bits suggests systematic client behavior,
-but that is an inference; it does not establish meanings for bits 10–11 or
-justify weakening the V01 mask.
+Tibber wrote `44108 = 0x0820` and later `0x0410`. These were invalid under the
+historical V01 mask but are valid V02 fake commands and now round-trip. In V02
+the respective grid-charge fields are 2 and 1; the discharge-prohibition
+fields are also 2 and 1. The capture proves the words sent, not Tibber's intent
+or physical-inverter acceptance. A write to `44111` is checked against the
+currently accepted `43011` and `44110` values, including an earlier accepted
+`44110` in the same FC16 frame. Later independent changes to those bounds do
+not automatically change an existing fake reserve value.
 
 The protected TOU gaps are `44124–44129`, `44139–44143`, `44153–44157`,
 `44167–44171`, `44181–44185`, and `44195–44199`. They, together with
-`44111–44115`, always read zero and ignore writes. The remaining TOU words are
+`44112–44115`, always read zero and ignore writes. The remaining TOU words are
 owned but intentionally raw-only.
 
 Smart Control V1.0 is internally inconsistent in its TOU table: it declares
@@ -493,9 +532,11 @@ The shared `smart_management_failsafe_minutes` option seeds both `43282` and
 legacy timeout; after startup, the official `44101` write range remains
 `1..1440`.
 
-An accepted Remote Dispatch write updates `34504`: it becomes zero when
-`44100` is off, 1 for system/default writes while enabled, 2 for real-time
+An accepted Remote Dispatch write updates `34504`: its low byte becomes zero
+when `44100` is off, 1 for system/default writes while enabled, 2 for real-time
 words, and 3 for a nonzero raw TOU write. An all-zero TOU write reports 1.
+For low-byte status 2, the high byte is the accepted fake `44105` mode; for
+other statuses it is zero. Neither byte confirms a physical operating mode.
 This is a classification of fake traffic, not a claim that a schedule is
 executing. Because the App has no TOU clock or schedule engine, it cannot
 model the official active-period failsafe exception and instead applies its
@@ -555,11 +596,11 @@ their existing ownership and baseline/zero behavior.
 The `DISCOVERY_READ_CASES` table preserves this ordered 2026-07-26 in-session
 burst between ordinary steady-state cycles:
 
-| Order | FC | Start / quantity | 0.9.0 response policy |
+| Order | FC | Start / quantity | Current response policy |
 |---:|---:|---|---|
 | 1 | 4 | `33000/20` | four zero identity/version words and all 16 canonical serial words |
 | 2 | 4 | `33067/3` | baseline/zero at `33067–33068`, then `fake_hmi_sub_version` at `33069` |
-| 3 | 4 | `34502/2` | `0xAA55, 0x0001` when fake smart management is enabled; otherwise zeroes |
+| 3 | 4 | `34502/2` | `0xAA55, 0x0002` when fake smart management is enabled; otherwise zeroes |
 | 4 | 4 | `35000/1` | validated inverter type code |
 | 5 | 3 | `43010/2` | configured fake maximum/minimum SoC; zeroes when disabled |
 | 6 | 3 | `43052/23` | owned settings at `43052`, `43073–43074`; unresolved interior words use generic precedence |
@@ -589,15 +630,15 @@ wire:
 | Order | Relative time | Request | Observed U16 words | Regression-tested fake result |
 |---:|---:|---|---|---|
 | 1 | `+00:00` | FC16 `44100/5` | `[1, 27, 3, 30, 30]` | all five mirrored; status `0 → 1`; standard FC16 acknowledgement |
-| 2 | `+00:00` | FC16 `44105/6` | `[2, 0, 0, 0x0820, 0, 100]` | five mirrored; `44108` retained because `0x0820` sets reserved bit 11; status `1 → 2`; standard acknowledgement |
-| 3 | `+15:07` | FC16 `44100/5` | `[1, 12, 3, 30, 30]` | all five mirrored; status `2 → 1`; standard acknowledgement |
-| 4 | `+15:07` | FC16 `44105/6` | `[2, 0, 0, 0x0820, 0, 100]` | five mirrored; `44108` retained; status `1 → 2`; standard acknowledgement |
-| 5 | `+17:38` | FC16 `44100/5` | `[1, 24, 3, 30, 0]` | all five mirrored; status `2 → 1`; standard acknowledgement |
-| 6 | `+17:38` | FC16 `44105/6` | `[2, 0xFFFF, 0xFEFB, 0x0410, 20, 95]` | five mirrored; `44108` retained because `0x0410` sets reserved bit 10; status `1 → 2`; standard acknowledgement |
+| 2 | `+00:00` | FC16 `44105/6` | `[2, 0, 0, 0x0820, 0, 100]` | all six mirrored; fake status `1 → 0x0202`; standard acknowledgement |
+| 3 | `+15:07` | FC16 `44100/5` | `[1, 12, 3, 30, 30]` | all five mirrored; fake status `0x0202 → 1`; standard acknowledgement |
+| 4 | `+15:07` | FC16 `44105/6` | `[2, 0, 0, 0x0820, 0, 100]` | all six mirrored; fake status `1 → 0x0202`; standard acknowledgement |
+| 5 | `+17:38` | FC16 `44100/5` | `[1, 24, 3, 30, 0]` | all five mirrored; fake status `0x0202 → 1`; standard acknowledgement |
+| 6 | `+17:38` | FC16 `44105/6` | `[2, 0xFFFF, 0xFEFB, 0x0410, 20, 95]` | all six mirrored; fake status `1 → 0x0202`; standard acknowledgement |
 
 Under Smart Control V1.0, each pair writes the five-word system-settings block
-and the six effective real-time words `44105–44110`. Tibber did not include
-reserved `44111–44115`. The first pair enables both limits at raw 30
+and the six real-time words `44105–44110`. Tibber did not include
+`44111–44115`. The first pair enables both limits at raw 30
 (`3000 W`), selects battery mode, requests zero power, and supplies a
 `0–100%` SoC window. The second pair changes the failsafe from 27 to 12 minutes
 while repeating that zero target. Because the pairs are 15 minutes and
@@ -612,12 +653,11 @@ writes words consistent with the fake high-word-first S32 value
 `-2610 W` at `10 W/raw`; in mode 2 the official sign convention makes it a
 2.61 kW battery discharge request. Its valid SoC window is `20–95%`.
 
-Both rejected `44108` values duplicate their defined grid-charge field from
-bits `4–5` into reserved bits `10–11`: value 2 in `0x0820`, then value 1 in
-`0x0410`. That repeated structure suggests systematic duplication and records
-a concrete Tibber/V01 interoperability conflict. It still does not establish
-the reserved field's meaning or prove that a covered physical inverter accepts
-it.
+Both `44108` values duplicate their grid-charge field from bits `4–5` into
+bits `10–11`: value 2 in `0x0820`, then value 1 in `0x0410`. Those high bits
+were reserved in V01 but describe discharge prohibition in V02. This repeated
+structure does not establish Tibber's intent or prove that any physical
+inverter accepts the words.
 
 No address at or above `44116` was written, so none of the three pairs is a
 Time-of-Use payload in protocol terms. The excerpt proves the exact frames,
@@ -627,7 +667,7 @@ readback and `34504` transitions. The excerpt does not include FC3 readback, a
 `34504` status read, an independently recorded Tibber UI result, cancellation,
 failsafe expiry, or evidence that a schedule or physical command ran. The
 write values are consumer behavior, not authority for physical-inverter
-operation or for the reserved bits.
+operation or register semantics.
 
 The `IDENTITY_AND_INITIAL_READ_CASES` table preserves these earlier FC4 reads
 at connection and approximately hourly:
@@ -708,7 +748,7 @@ continued polling, and three acknowledged two-frame FC16 Remote Dispatch
 bursts. The final payload is consistent with the fake profile's signed
 nonzero-discharge interpretation. The evidence still lacks independent UI
 acceptance, FC3 readback after the writes, cancellation, failsafe expiry, or
-proof of schedule execution. Before releasing 0.9.0, record those outcomes
+proof of schedule execution. Before release, record those outcomes
 and which values Tibber displays. The supplied steady-state requests do not
 include `33029–33030` or `33035`, so loss of an energy display remains a known
 investigation point. The later `33070/26` read shows that Tibber samples the

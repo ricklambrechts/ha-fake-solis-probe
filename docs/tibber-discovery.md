@@ -45,12 +45,14 @@ The Solis/Ginlong
 [Smart Control protocol V1.0](https://solarshop.baywa-re.lv/en/documents/solis-inverters-s6eh3p8k02nvydl-s6-eh3p8k02-nv-yd-l-0/381/96.pdf),
 dated 2025-03-15 and SHA-256
 `724128ae3a8b7343ce2022c6a031e7d796d21c459c955a6fc9843f55546648b2`,
-provides the strongest evidence for `34502–34504` and `44100–44199`. Its
+provides V01 evidence for `34502–34504` and `44100–44199`. Its
 stated trial scope is only S5-EH1P(3–6)K-L at ARM `V4C-63` / DSP `V50B02`
 and S6-EH3P(3–10)K-H at ARM `V12-05` / DSP `V06B05D01`, with one inverter
 and no parallel system. Its TOU table is internally inconsistent, so the App
 mirrors effective TOU words only as raw fake data and does not claim semantic
-TOU control.
+TOU control. The Solis-hosted hybrid table and pinned newer client cited in
+the register ledger describe the later V02 real-time fields; neither source
+proves Tibber acceptance or makes the fake profile a physical-control adapter.
 
 The community sources help explain client behavior but do not override the
 Smart Control document. They also conflict: for example, the pinned plugin assigns
@@ -68,7 +70,7 @@ where that port is reachable.
 Earlier observations record these FC4 requests for unit ID 1 at connection and
 approximately hourly:
 
-| Request | 0.9.0 response |
+| Request | Current response |
 |---|---|
 | `35000/1` | validated `fake_inverter_type_code`; default `2030` |
 | `33004/15` | first 15 words of the canonical 16-word serial |
@@ -77,11 +79,11 @@ approximately hourly:
 
 The 2026-07-26 capture records this ordered in-session FC4 burst:
 
-| Order | Request | 0.9.0 response policy |
+| Order | Request | Current response policy |
 |---:|---|---|
 | 1 | `33000/20` | four identity/version words followed by all 16 canonical serial words |
 | 2 | `33067/3` | baseline/zero at `33067–33068`, followed by `fake_hmi_sub_version` at `33069` |
-| 3 | `34502/2` | `0xAA55, 0x0001` when fake smart management is enabled; otherwise zeroes |
+| 3 | `34502/2` | `0xAA55, 0x0002` when fake smart management is enabled; otherwise zeroes |
 | 4 | `35000/1` | validated `fake_inverter_type_code` |
 
 The canonical serial occupies `33004–33019`. Tibber's shorter
@@ -133,8 +135,9 @@ discovery burst itself contained reads only.
 
 The exact `34502/2` request is significant: Smart Control V1.0 defines
 `34502 = 0xAA55` as the flag that makes `44100–44199` effective and
-`34503 = 0x0001` as protocol V01. This strongly suggests a capability gate,
-although Tibber's acceptance logic remains unpublished.
+`34503 = 0x0001` as protocol V01. The current fake advertises V02 with
+`34503 = 0x0002`. The read strongly suggests a capability gate, although
+Tibber's acceptance logic remains unpublished.
 
 ## Phase 3 — Pairing
 
@@ -170,7 +173,7 @@ writes can overlay the configured fake readback in memory.
 
 The 2026-07-26 capture instead records this ordered FC3 sequence:
 
-| Order | Request | 0.9.0 response policy |
+| Order | Request | Current response policy |
 |---:|---|---|
 | 1 | `43010/2` | configured fake SoC limits; zeroes when disabled |
 | 2 | `43052/23` | owned fake settings at `43052`, `43073–43074`; unresolved `43053–43072` retain ordinary unowned precedence |
@@ -189,26 +192,33 @@ No write is ever forwarded to Home Assistant or a physical inverter.
 
 ## Phase 5 — Optional fake Remote Dispatch
 
+The fake V02 behavior described in this section is unreleased.
+
 `smart_management_enabled` defaults to false. Disabled mode returns zero at
 `34502–34504`, the profile-owned legacy settings, and `44100–44199`, and
 ignores writes to those addresses. Enabling it requires `mirror_writes: true`;
-it advertises `34502 = 0xAA55`, `34503 = 1`, and provides fake-only FC3/FC6/FC16
+it advertises `34502 = 0xAA55`, `34503 = 2`, and provides fake-only FC3/FC6/FC16
 readback. It never forwards a command to Home Assistant or physical equipment.
 
-The verified `44100–44110` core models the master switch, failsafe, system
-limits, real-time mode/target/function flags, and lower/upper SoC. Invalid or
+The V02 `44100–44111` real-time core models the master switch, failsafe, system
+limits, real-time mode/target/function flags, lower/upper SoC, and reserve SoC.
+The `44111` fake default is 40%. Invalid or
 unsupported core writes retain the previous fake readback. `0xFFFF` at
 `44103` or `44104` restores the configured fake default.
 
-Reserved words `44111–44115`, `44124–44129`, `44139–44143`,
+Reserved words `44112–44115`, `44124–44129`, `44139–44143`,
 `44153–44157`, `44167–44171`, `44181–44185`, and `44195–44199` remain
 protected zero and ignore writes. Other TOU words are raw fake-mirror values
-because the official V1.0 TOU layout is internally inconsistent.
+because the official V1.0 TOU layout is internally inconsistent. **TOU
+schedules are not supported**: the App does not decode, validate, schedule,
+or execute them. V03 is not supported.
 
-Status `34504` is zero while dispatch is off, 1 for default/system activity,
-2 for real-time activity, and 3 after a nonzero raw TOU write; an all-zero TOU
-write reports 1. This classifies fake traffic and does not mean that a schedule
-is executing. Since the App has no TOU clock, its generic fake failsafe also
+The low byte of `34504` is zero while dispatch is off, 1 for default/system
+activity, 2 for real-time activity, and 3 after a nonzero raw TOU write; an
+all-zero TOU write reports 1. For real-time status 2, the high byte contains
+the accepted fake `44105` mode; otherwise it is zero. This classifies fake
+traffic and does not mean a schedule or physical control is running. Since
+the App has no TOU clock, its generic fake failsafe also
 applies to status 3 rather than modeling an active-period exception. The common
 `smart_management_failsafe_minutes` option seeds both legacy `43282` and
 Remote Dispatch `44101`; the option is limited to `1..30`, while a subsequent
@@ -222,11 +232,11 @@ The complete 0.9.0 excerpt contains three acknowledged two-frame bursts:
 | Order | Relative time | Request | U16 payload | Fake readback result |
 |---:|---:|---|---|---|
 | 1 | `+00:00` | FC16 `44100/5` | `[1, 27, 3, 30, 30]` | all five accepted; fake status 1 |
-| 2 | `+00:00` | FC16 `44105/6` | `[2, 0, 0, 0x0820, 0, 100]` | five accepted; `44108` rejected; fake status 2 |
+| 2 | `+00:00` | FC16 `44105/6` | `[2, 0, 0, 0x0820, 0, 100]` | all six mirrored; fake status `0x0202` |
 | 3 | `+15:07` | FC16 `44100/5` | `[1, 12, 3, 30, 30]` | all five accepted; fake status 1 |
-| 4 | `+15:07` | FC16 `44105/6` | `[2, 0, 0, 0x0820, 0, 100]` | five accepted; `44108` rejected; fake status 2 |
+| 4 | `+15:07` | FC16 `44105/6` | `[2, 0, 0, 0x0820, 0, 100]` | all six mirrored; fake status `0x0202` |
 | 5 | `+17:38` | FC16 `44100/5` | `[1, 24, 3, 30, 0]` | all five accepted; fake status 1 |
-| 6 | `+17:38` | FC16 `44105/6` | `[2, 0xFFFF, 0xFEFB, 0x0410, 20, 95]` | five accepted; `44108` rejected; fake status 2 |
+| 6 | `+17:38` | FC16 `44105/6` | `[2, 0xFFFF, 0xFEFB, 0x0410, 20, 95]` | all six mirrored; fake status `0x0202` |
 
 The first pair enables both system limits at `3000 W`, selects real-time
 battery mode, requests zero power, and sets a `0–100%` SoC range. The second
@@ -240,13 +250,11 @@ ceiling to `0 W`, and requests a `20–95%` SoC window. Its high-word-first
 target `0xFFFFFEFB` is signed raw `-261`, or `-2610 W`; official mode 2 makes
 that a 2.61 kW battery discharge request.
 
-Smart Control V1.0 reserves bits `8–15` of `44108`. Tibber's `0x0820` sets
-bit 11 and its later `0x0410` sets bit 10. In both values, reserved bits
-`10–11` duplicate the defined grid-charge field at bits `4–5`. The App
-acknowledges each FC16 request while retaining the prior `44108` readback and
-mirroring the other five words. The paired pattern establishes a concrete
-consumer/V01 conflict, not meanings for the reserved bits or
-physical-inverter acceptance.
+Smart Control V1.0 reserves bits `8–15` of `44108`; the later V02 table assigns
+bits `10–11` to discharge prohibition. Tibber's `0x0820` sets bit 11 and its
+later `0x0410` sets bit 10. The fake V02 profile acknowledges and mirrors both
+words. That demonstrates emulator behavior, not Tibber's intent or acceptance
+by a physical inverter.
 
 No `44116–44199` word was written. Despite the reported smart-scheduling
 association, all three bursts are system setup plus real-time control, not
@@ -308,7 +316,7 @@ hourly identity interval.
 
 ## Release verification checklist
 
-Before publishing 0.9.0:
+Before release:
 
 1. Start from canonical options with no removed keys.
 2. Complete a fresh Tibber discovery and pairing and record the UI outcome;

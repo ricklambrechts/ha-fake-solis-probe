@@ -5,7 +5,6 @@ supported Solis hybrid inverter, with an optional fake smart-management
 register surface.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[[![Version](https://img.shields.io/badge/app%20version-0.9.0-blue)](fake_solis_probe/CHANGELOG.md)]([![Version](https://img.shields.io/badge/addon%20version-0.6.0-blue)](fake_solis_probe/CHANGELOG.md))
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-HAOS%20Addon-41BDF5?logo=home-assistant)](https://www.home-assistant.io/)
 ![Status: Experimental](https://img.shields.io/badge/status-experimental-orange)
 
@@ -33,7 +32,10 @@ process.
 
 ## Current protocol status
 
-Version 0.9.0 retains the corrected 0.8.0 base profile and adds:
+> [!NOTE]
+> The fake V02 smart-management behavior described here is unreleased.
+
+The development profile retains the corrected base profile and provides:
 
 - PV power remains at `33057–33058`.
 - Meter total active power remains at `33263–33264`.
@@ -48,7 +50,7 @@ Version 0.9.0 retains the corrected 0.8.0 base profile and adds:
 - Optional, distinct inverter AC grid-port power uses `33151–33152`.
 - `fake_hmi_sub_version` supplies the discovery word at `33069`.
 - An experimental smart-management profile can advertise remote dispatch at
-  `34502–34503` and mirror fake holding-register writes.
+  `34502–34503` and mirror fake V02 real-time holding-register writes.
 - Unresolved or profile-specific addresses requested by Tibber receive safe
   zeroes.
 
@@ -345,9 +347,14 @@ smart_management_enabled: true
 
 Startup fails if smart management is enabled without write mirroring. When
 enabled, the App advertises remote-dispatch support with `34502 = 0xAA55` and
-`34503 = 0x0001`, exposes validated fake defaults for the observed legacy
+`34503 = 0x0002` (V02), exposes validated fake defaults for the observed legacy
 holding registers, and provides an in-memory readback surface for
 `44100–44199`.
+
+V02 real-time modes 5 and 6, function fields at `44108` through bit 13, and
+reserve SoC readback at `44111` are supported. The observed `0x0410` and
+`0x0820` function words round-trip. This is fake readback, not confirmation of
+Tibber UI acceptance or physical-inverter behavior. V03 is not supported.
 
 | Option | Default | Fake register behavior |
 |---|---:|---|
@@ -368,10 +375,10 @@ holding registers, and provides an in-memory readback surface for
 This does **not** control energy equipment. FC6/FC16 writes update only the
 fake in-memory holding overlay and are cleared on restart. The App never calls
 Home Assistant services and never forwards commands to a physical inverter.
-Defined time-of-use words in the `44100–44199` range are raw mirrored readback
-only; protocol-reserved gaps remain protected zeroes. Invalid profile writes
-retain the previous readback. The App does not interpret schedules or run a
-charging controller.
+**TOU schedules are not supported.** Defined time-of-use words in the
+`44100–44199` range are raw mirrored readback only; protected gaps remain
+zeroes. The App does not parse, validate, schedule, or execute them. Invalid
+profile writes retain the previous readback, and no charging controller runs.
 
 ## Pairing and verification
 
@@ -382,7 +389,7 @@ count, using canonical values or deterministic safe zeroes.
 A 2026-07-26 trace confirms three acknowledged two-frame Tibber FC16 Remote
 Dispatch bursts in a session associated with smart scheduling. They use
 system-settings and real-time blocks, including a later signed 2.61 kW
-discharge target; no TOU block was written. Before relying on 0.9.0, verify
+discharge target; no TOU block was written. Before relying on this profile, verify
 post-write FC3 readback, cancellation, failsafe expiry, the Tibber UI outcome,
 and the values Tibber displays. Test smart management only with the explicit
 opt-in above. Loss of a display value should trigger a new sanitized capture

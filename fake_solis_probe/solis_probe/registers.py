@@ -87,7 +87,7 @@ LEGACY_SMART_MANAGEMENT_HOLDING_ADDRESSES = _address_set(
 )
 REMOTE_DISPATCH_HOLDING_ADDRESSES = _address_set(range(44100, 44200))
 REMOTE_DISPATCH_RESERVED_HOLDING_ADDRESSES = _address_set(
-    range(44111, 44116),
+    range(44112, 44116),
     range(44124, 44130),
     range(44139, 44144),
     range(44153, 44158),
@@ -247,6 +247,7 @@ def _smart_management_holding_defaults() -> dict[int, int]:
         44108: 0,
         44109: minimum_soc,
         44110: maximum_soc,
+        44111: 40,
     }
 
 
@@ -283,7 +284,7 @@ def initialize_profile_registers() -> None:
         PROFILE_INPUT_REGISTERS[33121] = 0x0001
         if smart_management_enabled:
             PROFILE_INPUT_REGISTERS[34502] = 0xAA55
-            PROFILE_INPUT_REGISTERS[34503] = 0x0001
+            PROFILE_INPUT_REGISTERS[34503] = 0x0002
             PROFILE_INPUT_REGISTERS[34504] = 0x0000
         PROFILE_INPUT_REGISTERS[35000] = type_code
         PROFILE_HOLDING_REGISTERS.clear()
@@ -572,15 +573,27 @@ def _valid_profile_write_locked(
     if address in (44103, 44104):
         return True
     if address == 44105:
-        return value in (1, 2, 3, 4)
+        return value in (1, 2, 3, 4, 5, 6)
     if address == 44108:
-        return value & ~0x00FF == 0 and all(
-            ((value >> shift) & 0x03) != 0x03 for shift in (0, 2, 4, 6)
+        # Mirror the valid raw request; individual zero fields are not merged.
+        return (
+            value != 0
+            and value & ~0x3FFF == 0
+            and all(
+                ((value >> shift) & 0x03) != 0x03 for shift in (0, 2, 4, 6, 8, 10, 12)
+            )
         )
     if address in (44109, 44110):
         lower = proposed[44109]
         upper = proposed[44110]
-        return 0 <= lower <= upper <= 100
+        return 0 <= lower < upper <= 100
+    if address == 44111:
+        # Earlier words in the same FC16 are already accepted or rejected.
+        return (
+            _current_holding_word_locked(43011)
+            <= value
+            <= _current_holding_word_locked(44110)
+        )
     return True
 
 
@@ -659,6 +672,9 @@ def write_holding_registers(
                 status_after = 2
             else:
                 status_after = 1
+            if status_after == 2:
+                # This mode describes fake real-time traffic, not hardware.
+                status_after |= _current_holding_word_locked(44105) << 8
             PROFILE_INPUT_REGISTERS[34504] = status_after
         else:
             status_after = status_before

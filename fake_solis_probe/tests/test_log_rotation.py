@@ -292,7 +292,7 @@ def test_backup_count_negative_truncates(tmpdir: str) -> bool:
 
 def main() -> int:
     print("=" * 60)
-    print("Fake Solis Probe v0.9.0 — log rotation tests")
+    print("Fake Solis Probe — log rotation tests")
     print("=" * 60)
 
     results = []

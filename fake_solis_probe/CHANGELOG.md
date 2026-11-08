@@ -4,6 +4,12 @@
 
 ### Added
 
+- Fake Remote Dispatch V02 real-time readback, including modes 5/6, `44108`
+  V02 function fields, reserve SoC at `44111` with a 40% default, and the fake
+  real-time mode in the high byte of status `34504`. The observed `0x0410`
+  and `0x0820` words now round-trip in the fake profile.
+- A dependency-free standalone V02 regression suite covering real-time writes,
+  status, boundaries, protected ranges, restart, failsafe, and no forwarding.
 - Optional, independent inverter AC voltage A/B/C, current A/B/C, and signed
   active-power sources for FC4 `33073–33080`, with shared per-kind scales and
   unavailable policies. Inverter AC power has a configurable `direct` or
@@ -16,6 +22,11 @@
 
 ### Changed
 
+- **Breaking fake protocol change:** the opt-in smart-management profile now
+  advertises V02 (`34503 = 2`) instead of V01. There is no legacy selector.
+  Valid `44108` words are mirrored as raw fake commands; all-zero, invalid
+  field, and V03-bit writes retain the prior fake readback. Real-time SoC
+  lower and upper limits must be strictly ordered.
 - `33073–33080` are profile-owned, so `registers.json` can no longer seed
   those input addresses. AC active power remains separate from PV/DC and
   meter power. Tibber has been observed reading the containing `33070/26`
@@ -27,6 +38,16 @@
   sanitized request shapes and artificial before/after expectations directly
   beside the tests that consume them; the evidence documentation retains
   capture provenance and authority limits.
+
+### Safety and verification
+
+- **TOU schedules are not supported.** Existing writable TOU words are raw fake
+  readback only; the App does not decode, validate, schedule, or execute them.
+  V03 is not supported. No Modbus write calls Home Assistant, changes an entity,
+  or reaches a physical inverter.
+- The V02 status and readback are emulator behavior, not proof of physical
+  execution or Tibber UI acceptance. A controlled Tibber discovery/pairing and
+  display check is still required.
 
 ## [0.9.0] - 2026-07-26
 

@@ -366,6 +366,9 @@ The App intentionally has no aliases:
 
 ## Experimental smart-management profile
 
+> [!NOTE]
+> The fake V02 smart-management behavior described below is unreleased.
+
 The fake smart-management surface is disabled by default. Enabling it requires
 write mirroring:
 
@@ -376,11 +379,14 @@ smart_management_enabled: true
 
 The App rejects this profile at startup if `mirror_writes` is false. When
 enabled, `34502 = 0xAA55` advertises remote-dispatch support and
-`34503 = 0x0001` reports protocol version V01. `34504` is a fake runtime
-status: `0` not running, `1` default settings, `2` real-time control, or `3`
-after a nonzero raw time-of-use write. An all-zero TOU write reports 1. This
-classifies fake traffic rather than claiming that a schedule runs. It returns
-to zero when the generic in-memory failsafe expires.
+`34503 = 0x0002` reports protocol version V02. V03 is not supported.
+
+`34504` classifies fake traffic in its low byte: `0` inactive, `1` default
+settings, `2` real-time, or `3` after a nonzero raw time-of-use write. For
+real-time status only, its high byte is the fake mode read from `44105`; for
+other statuses the high byte is zero. An all-zero TOU write reports 1. Neither
+byte confirms physical behavior or an executing schedule. The status returns to
+zero when the generic in-memory failsafe expires.
 
 The profile initializes the observed legacy settings and the remote-dispatch
 surface from semantic options:
@@ -408,9 +414,15 @@ other codes. Explicit choices are `general_1_phase`, `acrel_3_phase`,
 
 FC6/FC16 writes to supported profile holdings are mirrored only in memory and
 read back through FC3. The `44100–44199` remote-dispatch range is
-profile-owned, but protocol-reserved gaps remain protected zeroes. Only
-`44100–44110` have semantic defaults; defined time-of-use words are raw
-mirrored readback only. The App does not parse, schedule, or execute them.
+profile-owned, but reserved gaps remain protected zeroes. V02 real-time
+support adds modes 5/6, the `44108` fields through bit 13, and fake reserve
+SoC at `44111` (default 40%; writes must fall between current `43011` and
+`44110`, inclusive). Accepted `44108` words are raw fake readback; zero mixed
+fields are not merged into a physical-state claim. All-zero or invalid words
+retain the previous readback. `44112–44115` and V03 bits remain protected.
+
+**TOU schedules are not supported.** Defined time-of-use words are opaque raw
+readback only; the App does not parse, validate, schedule, or execute them.
 Invalid values are acknowledged without changing readback, while `0xFFFF`
 written to `44103` or `44104` restores that word's configured default.
 
@@ -441,4 +453,4 @@ real-time block carries a signed 2.61 kW discharge target; no TOU block was
 written. The trace does not include post-write FC3 readback, cancellation,
 failsafe expiry, or independent proof of UI acceptance or schedule execution.
 Those outcomes, plus what Tibber actually displays, still require physical
-verification before relying on 0.9.0.
+verification before relying on this profile.

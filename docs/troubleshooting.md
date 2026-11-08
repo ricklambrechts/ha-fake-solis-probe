@@ -198,22 +198,29 @@ release.
 
 ### Tibber does not offer external/smart management
 
+The V02 behavior described below is unreleased.
+
 Confirm that both `smart_management_enabled` and `mirror_writes` are true and
 that the App restarted successfully. With the profile enabled, an FC4 read
-must return `34502 = 0xAA55` and `34503 = 0x0001`.
+must return `34502 = 0xAA55` and `34503 = 0x0002`.
 
 This remains experimental. Those capability words and successful FC3/FC6/FC16
 traffic prove only fake protocol readback; they do not prove that Tibber will
 accept the emulated inverter or expose a particular UI.
 
 The observed real-time FC16 frames write `44108 = 0x0820` and later
-`0x0410`. Smart Control V1.0 reserves their high bytes, so the App acknowledges
-each frame but retains the previous `44108` value while mirroring the other
-five valid words. A log entry with `mirrored_count: 5` and
-`profile_blocked_count: 1` for `44105/6` is therefore expected. The high
-2-bit pair duplicates the defined grid-charge field in both values, which is a
-useful Tibber/V01 conflict to investigate but not authority to accept the
-reserved bits.
+`0x0410`. These are accepted by the fake V02 profile; with the observed valid
+six-word blocks, the expected log counts are `mirrored_count: 6` and
+`profile_blocked_count: 0`. An FC3 read of `44108` returns the last accepted
+raw fake word. An all-zero word, a field value 3, or V03 bits 14–15 is rejected
+and retains the previous readback. This does not prove physical-inverter
+acceptance or explain Tibber's intent.
+
+V02 packs the fake real-time mode into the high byte of `34504`. For example,
+mode 2 with real-time status 2 reads as `0x0202` (decimal `514`), not `2`.
+Any existing Home Assistant consumer comparing the entire raw word to `2`
+must instead inspect the low status byte. This byte is still only a fake
+traffic classification, not confirmation of physical control.
 
 ### Smart-management writes do not affect my battery
 
@@ -225,7 +232,8 @@ to a physical inverter.
 The fake overlay is cleared on restart. The configured failsafe can also clear
 the fake remote-dispatch main switch and status. Defined time-of-use words
 within `44100–44199` are opaque raw readback; protocol-reserved gaps remain
-protected zeroes, and no schedules are interpreted or run. Invalid profile
+protected zeroes. **TOU schedules are not supported**: none are decoded,
+validated, scheduled, or run. V03 is not supported. Invalid profile
 writes retain their previous readback.
 
 ## Values look wrong
@@ -324,10 +332,11 @@ The structured log is:
 /share/fake_solis_probe/events.jsonl
 ```
 
-A normal 0.9.0 startup includes events similar to:
+An App startup includes events similar to the following; the version depends
+on the installed build:
 
 ```json
-{"kind":"probe_start","version":"0.9.0"}
+{"kind":"probe_start","version":"<installed-app-version>"}
 {"kind":"config_validation_passed"}
 {"kind":"profile_initialized","operating_status":1,"serial_words":16,"smart_management_enabled":false}
 {"kind":"sensor_poll_started"}

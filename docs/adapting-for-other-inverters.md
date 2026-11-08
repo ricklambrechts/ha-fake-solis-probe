@@ -5,9 +5,10 @@ Assistant integration. “Adapting” means selecting and scaling those Home
 Assistant sources. It does not mean copying another inverter family's raw
 register map into the Solis hybrid profile.
 
-Version 0.9.0 implements the base Solis hybrid telemetry profile plus an
-experimental, fake-only smart-management surface. A future string-inverter or
-other feature profile would need its own official protocol, explicit selector,
+Fake Solis Probe emulates the base Solis hybrid telemetry profile. The
+unreleased smart-management feature adds experimental, fake-only Remote
+Dispatch V02 real-time register support. A future string-inverter or other
+feature profile would need its own official protocol, explicit selector,
 identity map, register ownership, and parameterized regression cases.
 
 ## 1. Select the four required entities
@@ -258,8 +259,8 @@ smart_management_enabled: true
 ```
 
 Startup fails if `smart_management_enabled` is true while `mirror_writes` is
-false. When enabled, the App advertises V01 remote dispatch using
-`34502 = 0xAA55` and `34503 = 0x0001`, then mirrors supported FC6/FC16 writes
+false. When enabled, the App advertises V02 remote dispatch using
+`34502 = 0xAA55` and `34503 = 0x0002`, then mirrors supported FC6/FC16 writes
 into its in-memory holding overlay for FC3 readback.
 
 Choose semantic defaults that describe the fake inverter profile:
@@ -280,10 +281,12 @@ Choose semantic defaults that describe the fake inverter profile:
 | `smart_management_peak_max_grid_power_w` | `0` | Nonnegative multiple of `100 W` |
 | `smart_management_failsafe_minutes` | `5` | `1..30` minutes |
 
-The options initialize the observed legacy settings and `44100–44110`. The
+The options initialize the observed legacy settings and `44100–44110`; fake
+reserve SoC at `44111` additionally defaults to 40%. The
 `44100–44199` range is profile-owned, but protocol-reserved gaps remain
 protected zeroes. Defined time-of-use words without semantic options are
-opaque readback only. Invalid profile values retain their prior readback, and
+opaque readback only: **TOU schedules are not supported**. V03 is also outside
+the profile. Invalid profile values retain their prior readback, and
 `0xFFFF` at `44103` or `44104` restores that word's configured default. The
 App does not interpret a schedule, call a Home Assistant service, write an
 entity, or contact a physical inverter. Restarting clears the fake write
